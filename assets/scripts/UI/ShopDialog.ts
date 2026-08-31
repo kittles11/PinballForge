@@ -6,6 +6,7 @@ import { GoldManager } from '../Core/GoldManager';
 import { DeckManager } from '../Core/DeckManager';
 import { CastleController } from '../Battle/CastleController';
 import { AudioManager } from '../Core/AudioManager';
+import { Analytics } from '../Core/Analytics';
 import { OrbType } from '../Core/DataModels';
 
 const { ccclass, property } = _decorator;
@@ -265,6 +266,8 @@ export class ShopDialog extends Component {
             this._soldItems.add(soldId); // 商品售罄：限购 1 次
         }
         apply();
+        // 附录 A shop_buy：商店转化与定价埋点（删卡无商品 id，固定 remove_card；goldBalance 为扣款后余额）
+        Analytics.track('shop_buy', { itemId: soldId ?? 'remove_card', price, goldBalance: gold.currentGold });
         AudioManager.playFire(2); // 金币扣除音效：经典双音 Ching
         this.showMessage(successMsg, true);
         this.refreshUi();

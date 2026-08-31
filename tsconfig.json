@@ -13,6 +13,7 @@
     "selfcheck-peg-layouts.ts",
     "selfcheck-deflectors.ts",
     "selfcheck-code-standards.ts",
-    "selfcheck-funnel-orb.ts"
+    "selfcheck-funnel-orb.ts",
+    "selfcheck-ops-wiring.ts"
   ]
 }

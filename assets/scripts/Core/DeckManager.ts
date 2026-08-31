@@ -5,6 +5,8 @@ import { DeckButtonController, TAP_SLOP } from '../UI/DeckButtonController';
 import { EventBus, GameEvents } from './EventBus';
 import { TutorialManager } from './TutorialManager';
 import { OrbBalance } from './OrbBalance';
+import { OpsBridge } from './OpsBridge';
+import { DailyTaskDialog } from '../UI/DailyTaskDialog';
 
 const { ccclass, property } = _decorator;
 
@@ -60,6 +62,10 @@ export class DeckManager extends Component {
         // 🎓 新手三步引导自举：必须在 onLoad 挂事件监听（Cocos 保证所有 onLoad 先于所有 start 执行），
         // 否则会错过 WaveManager.start() 在场景启动阶段广播的第一波 WAVE_START。
         TutorialManager.ensureMounted();
+        // 📊 运营埋点桥自举（附录 A 统一挂钩层 + 每日任务进度上报；监听 EventBus，业务系统零侵入）
+        OpsBridge.ensureMounted();
+        // 📋 每日任务面板 + 徽章自举（面板监听 SHOW_DAILY_TASKS 打开；模块级 bootstrap 兜底场景重载重挂）
+        DailyTaskDialog.ensureMounted();
         // ⚒ meta 永久升级「弹珠打磨」：开局套用伤害加成（OrbBalance.reset() 末尾同样套用，重开一局也覆盖）
         OrbBalance.applyMetaBonus();
     }

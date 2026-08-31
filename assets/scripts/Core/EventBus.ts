@@ -1,5 +1,5 @@
 import { EventTarget } from 'cc';
-import type { Vec2Like, WaveConfig, OrbType, RelicType } from './DataModels';
+import type { Vec2Like, WaveDef, OrbType, RelicType } from './DataModels';
 import type { EnemyController } from '../Battle/EnemyController';
 
 /** 全局事件名 */
@@ -16,7 +16,7 @@ export enum GameEvents {
     ATTACK_CASTLE = 'ATTACK_CASTLE',
     /** 金币增加 */
     GAIN_GOLD = 'GAIN_GOLD',
-    /** 一波开始 */
+    /** 一波开始（载荷为该波真实生成配置 WaveDef） */
     WAVE_START = 'WAVE_START',
     /** 敌人被击杀（通知波次管理器结算） */
     ENEMY_KILLED = 'ENEMY_KILLED',
@@ -40,6 +40,8 @@ export enum GameEvents {
     RELIC_ACQUIRED = 'RELIC_ACQUIRED',
     /** 打开 🎒 牌库与遗物背包弹窗（DeckButtonController 发起，DeckViewDialog 监听展示） */
     SHOW_DECK_VIEW = 'SHOW_DECK_VIEW',
+    /** 打开 📋 每日任务面板（DailyTaskBadge 徽章发起，DailyTaskDialog 监听展示） */
+    SHOW_DAILY_TASKS = 'SHOW_DAILY_TASKS',
     /** 敌人入场登记（EnemyController start 广播）：EnemyManager 监听登记，解除与 EnemyController 互相导入的循环引用 */
     ENEMY_SPAWNED = 'ENEMY_SPAWNED',
     /** 敌人销毁注销（EnemyController onDestroy 广播）：EnemyManager 监听即时移除列表引用 */
@@ -54,7 +56,7 @@ export interface GameEventMap {
     [GameEvents.FIRE_TURRET]: { damage: number; orbType: OrbType };
     [GameEvents.ATTACK_CASTLE]: { damage: number };
     [GameEvents.GAIN_GOLD]: { amount: number; total?: number };
-    [GameEvents.WAVE_START]: { config: WaveConfig };
+    [GameEvents.WAVE_START]: { config: WaveDef };
     [GameEvents.ENEMY_KILLED]: EnemyController;
     [GameEvents.ENEMY_SPLIT]: { x: number; y: number; count: number; hp: number; speed: number };
     [GameEvents.GAME_OVER]: void;
@@ -66,6 +68,7 @@ export interface GameEventMap {
     [GameEvents.RELIC_CHANGED]: RelicType[];
     [GameEvents.RELIC_ACQUIRED]: RelicType;
     [GameEvents.SHOW_DECK_VIEW]: void;
+    [GameEvents.SHOW_DAILY_TASKS]: void;
     [GameEvents.ENEMY_SPAWNED]: EnemyController;
     [GameEvents.ENEMY_REMOVED]: EnemyController;
 }

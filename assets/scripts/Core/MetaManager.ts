@@ -7,6 +7,7 @@
  * 存档：localStorage('pinballforge_meta')，与关卡进度存档（pinballforge_progress）完全独立——
  * LevelManager.resetProgress() 只清进度 key，绝不清 meta（死了买完强化，进度归零、强化留下）。
  */
+import { Analytics } from './Analytics';
 
 /** 永久进度存档键（独立于 pinballforge_progress，防 resetProgress 误清） */
 const META_SAVE_KEY = 'pinballforge_meta';
@@ -126,6 +127,21 @@ class MetaManagerClass {
         return amount;
     }
 
+    /**
+     * 直接入账碎片（每日任务奖励等运营系统共用入口；grantRunReward 仍走自身发放+日志）。
+     * 非法值（负数 / NaN / 无穷）按 0 处理返回 0；成功入账并写存档，返回实际入账值。
+     */
+    addShards(amount: number): number {
+        this.ensureLoaded();
+        const n = typeof amount === 'number' && Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
+        if (n <= 0) {
+            return 0;
+        }
+        this.shards += n;
+        this.save();
+        return n;
+    }
+
     /** 当前持有碎片 */
     getShards(): number {
         this.ensureLoaded();
@@ -165,6 +181,8 @@ class MetaManagerClass {
         this.shards -= price;
         this.levels[id] += 1;
         this.save();
+        // 附录 A meta_buy：meta 消耗节奏埋点（Analytics 纯逻辑零 cc 依赖，不破坏本模块的 node 自检）
+        Analytics.track('meta_buy', { upgradeId: id, toLv: this.levels[id], price });
         console.log(`[Meta] ${UPGRADE_NAMES[id]} → Lv${this.levels[id]}，花费 ⚒${price}，剩余 ${this.shards}`);
         return true;
     }

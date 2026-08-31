@@ -128,6 +128,9 @@ export class WaveManager extends Component {
             this.waveLabel.string = `波次: ${waveIndex}/${this.maxWaves} · ${LevelManager.getProgressText()}`;
         }
         console.log(`[Wave] ${LevelManager.getProgressText()} 第 ${waveIndex} 波开始：生成 ${def.count} 只敌人`);
+        // 广播波次开始：TutorialManager 首步引导与 OpsBridge 埋点（附录 A wave_start/run_start）的统一信源。
+        // 此前本事件只有监听没有 emit（接线缺口，TutorialManager 瞄准提示因此永不触发），此处补齐。
+        EventBus.emit(GameEvents.WAVE_START, { config: def });
         this.spawnBatch(def, 0);
     }
 

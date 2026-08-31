@@ -12,6 +12,7 @@ import { CardData, CARD_DATABASE, drawWeightedCards, OrbType, RelicType } from '
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, RELIC_INFO, ALL_RELIC_TYPES } from '../Core/RelicManager';
 import { GoldManager } from '../Core/GoldManager';
+import { Analytics } from '../Core/Analytics';
 
 const { ccclass, property } = _decorator;
 
@@ -129,6 +130,11 @@ export class RewardDialog extends Component {
         if (this.cardC?.isValid) {
             this.cardC.active = true; // 常规三选一：三张卡全显示
         }
+        // 附录 A card_offer：卡牌曝光（offers 为卡牌 id 数组；与 card_pick 对齐算弃选率 → 冷门卡重做）
+        Analytics.track('card_offer', {
+            chapter: LevelManager.currentChapter,
+            offers: this._currentRewards.map((c) => c.id),
+        });
         console.log('[Reward] 展示奖励:', this._currentRewards.map((c) => c.title).join(' / '));
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, true); // 弹窗打开：冻结发射
         this.node.active = true;
@@ -151,6 +157,8 @@ export class RewardDialog extends Component {
         this.setRelicCard(this.cardA, 0);
         this.setRelicCard(this.cardB, 1);
         console.log('[Reward] 传奇藏宝箱：遗物二选一', this._chestRelics.map((t) => RELIC_INFO[t]?.name).join(' / '));
+        // 附录 A relic_offer：遗物曝光（第 5/10 关精英/Boss 战后宝箱二选一）
+        Analytics.track('relic_offer', { types: this._chestRelics });
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, true); // 冻结发射
         this.node.active = true;
         this.playPopAnimation();
@@ -259,6 +267,13 @@ export class RewardDialog extends Component {
             return;
         }
         this._selecting = true;
+        // 附录 A card_pick：选择回调（usedRefresh 为刷新卡牌功能占位字段——功能未上线恒 false，
+        // 字段先行定死符合附录 A「只增不改」红线，后续上线刷新功能时直接改值）
+        Analytics.track('card_pick', {
+            pickedId: reward.id,
+            offers: this._currentRewards.map((c) => c.id),
+            usedRefresh: false,
+        });
         this.applyReward(reward);
         // 新回合钉板复活：清空上一场全部钉子受击计数（含力竭灰色）
         PegComponent.resetAllPegs();
