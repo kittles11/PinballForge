@@ -1,4 +1,5 @@
 import { OrbType } from './DataModels';
+import { MetaManager } from './MetaManager';
 
 /**
  * 弹珠战斗数值与本局升级状态。
@@ -123,6 +124,19 @@ export class OrbBalance {
         }
     }
 
+    /**
+     * 永久升级（meta「弹珠打磨」）伤害加成：赋值式（默认值 + 加成，幂等可重复调用），
+     * 四种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
+     * 调用时机：DeckManager.onLoad（场景首局）与 reset() 末尾（重开一局），两处都套保证任何起点都生效。
+     */
+    static applyMetaBonus(): void {
+        const bonus = MetaManager.getDamageBonus();
+        this.normal.baseDamage = DEFAULT_NORMAL.baseDamage + bonus;
+        this.lightning.baseDamage = DEFAULT_LIGHTNING.baseDamage + bonus;
+        this.lava.baseDamage = DEFAULT_LAVA.baseDamage + bonus;
+        this.frost.baseDamage = DEFAULT_FROST.baseDamage + bonus;
+    }
+
     static reset(): void {
         Object.assign(this.normal, DEFAULT_NORMAL);
         Object.assign(this.lightning, DEFAULT_LIGHTNING);
@@ -132,6 +146,8 @@ export class OrbBalance {
         this.funnelBonus = 0;
         this.lavaAreaSplashEnabled = false;
         this.lightningComboEnabled = false;
+        // ⚒ 重开一局后同样套用 meta 永久伤害加成（本局升级清零、永久强化保留）
+        this.applyMetaBonus();
     }
 
     static configFor(type: OrbType): OrbConfig {

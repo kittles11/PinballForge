@@ -3,6 +3,7 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { AudioManager } from '../Core/AudioManager';
 import { RelicType } from '../Core/DataModels';
 import { RelicManager } from '../Core/RelicManager';
+import { MetaManager } from '../Core/MetaManager';
 
 const { ccclass, property } = _decorator;
 
@@ -38,6 +39,8 @@ export class CastleController extends Component {
     protected onLoad(): void {
         // 单例尽早建立（onLoad 早于各系统 start，保证 RewardDialog 战后选择城堡维修时已可访问）
         CastleController.instance = this;
+        // ⚒ meta 永久升级「城堡加固」：血量上限加成（先于 currentHp 初始化，确保首局即生效）
+        this.maxHp += MetaManager.getCastleBonus();
         this.currentHp = this.maxHp;
         if (!this.hpLabel) {
             this.hpLabel = find('Canvas/UILayer/CastleHpLabel')?.getComponent(Label) || this.node.getComponentInChildren(Label)!;

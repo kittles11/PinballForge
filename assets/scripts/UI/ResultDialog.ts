@@ -1,5 +1,5 @@
 import {
-    _decorator, Component, Node, Label, UITransform, director, Vec3, tween, Tween,
+    _decorator, Component, Node, Label, UITransform, director, Vec3, tween, Tween, Color,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { EnemyController } from '../Battle/EnemyController';
@@ -8,8 +8,16 @@ import { RelicManager } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
 import { ShopDialog } from './ShopDialog';
 import { OrbBalance } from '../Core/OrbBalance';
+import { MetaManager, META_MAX_LV } from '../Core/MetaManager';
+import type { MetaUpgradeId } from '../Core/MetaManager';
 
 const { ccclass, property } = _decorator;
+
+/** 锻造区配色：碎片余额行 / 可买行（金）/ 钱不够（灰）/ 已满级（暗灰） */
+const FORGE_COLOR_SHARDS = new Color(255, 216, 112, 255);
+const FORGE_COLOR_BUYABLE = new Color(255, 216, 112, 255);
+const FORGE_COLOR_LOCKED = new Color(158, 158, 158, 255);
+const FORGE_COLOR_MAXED = new Color(120, 120, 120, 255);
 
 /**
  * 胜负结算弹窗：挂载在 Canvas/UILayer/ResultDialog 节点上。
@@ -33,6 +41,19 @@ export class ResultDialog extends Component {
     /** 场景重载防抖：防连点重复 loadScene 引发双重销毁竞态 */
     private _restarting = false;
 
+    // ---------- ⚒ 死亡补偿锻造区（P1-1：结算发碎片 + 永久升级原地购买） ----------
+
+    /** 结算发碎片防重标志（GAME_OVER / GAME_VICTORY 理论只广播一次，防其他触发源重复入账） */
+    private _rewardGranted = false;
+    /** 本局获得的碎片量（锻造区展示用） */
+    private _gainedShards = 0;
+    /** 锻造区根节点（幂等创建；descLabel 与 RestartButton 之间） */
+    private _forgeRoot: Node | null = null;
+    /** 碎片余额行 Label */
+    private _shardsLabel: Label | null = null;
+    /** 三条升级行 Label（与 MetaManager.getUpgradeList() 顺序一致） */
+    private _rowLabels: Label[] = [];
+
     protected onLoad(): void {
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
         EventBus.on(GameEvents.GAME_VICTORY, this.onGameVictory, this);
@@ -54,6 +75,10 @@ export class ResultDialog extends Component {
         if (this.restartBtn?.isValid) {
             this.restartBtn.off(Node.EventType.TOUCH_END, this.onRestartClick, this);
         }
+        // 锻造区节点随本节点销毁（子节点连带销毁、监听自动解除），这里仅清引用防悬挂
+        this._forgeRoot = null;
+        this._shardsLabel = null;
+        this._rowLabels = [];
     }
 
     /** 城堡沦陷：显示失败结算 */
@@ -82,7 +107,87 @@ export class ResultDialog extends Component {
                 ? '恭喜守护住了城堡，通关全部波次！'
                 : '要塞被怪物摧毁，请强化弹珠后再试！';
         }
+        // ⚒ 死亡补偿：按结算时的章节/关卡进度发放 meta 碎片（一次结算只发一次），并挂出锻造区供原地购买
+        if (!this._rewardGranted) {
+            this._rewardGranted = true;
+            this._gainedShards = MetaManager.grantRunReward(
+                LevelManager.currentChapter, LevelManager.currentLevel, isWin,
+            );
+        }
+        this.ensureForgeSection();
+        this.refreshForge();
         this.playPopAnimation();
+    }
+
+    // ---------- ⚒ 锻造区（纯代码构建，零 Inspector 配置；TutorialManager 同款模式） ----------
+
+    /** 幂等创建锻造区：碎片余额行 + 三条升级行（整行可点购买） */
+    private ensureForgeSection(): void {
+        if (this._forgeRoot?.isValid) {
+            return;
+        }
+        const root = new Node('ForgeSection');
+        root.addComponent(UITransform).setContentSize(500, 130);
+        // 摆位（面板 560×560 居中锚点）：descLabel(y=40) 与 RestartButton(y=-140) 之间，留出余量不重叠
+        root.setPosition(0, -48, 0);
+        this.node.addChild(root);
+        this._forgeRoot = root;
+
+        // 第一行：碎片余额（本局获得 + 持有总量）
+        this._shardsLabel = this.makeForgeRow(root, 0, 48, 20, FORGE_COLOR_SHARDS);
+        // 之后三行：永久升级（与 MetaManager.getUpgradeList() 固定顺序一致），整行可点击购买
+        this._rowLabels = MetaManager.getUpgradeList().map((u, i) => {
+            const label = this.makeForgeRow(root, 0, 10 - i * 34, 17, Color.WHITE.clone());
+            label.node.on(Node.EventType.TOUCH_END, () => this.onForgeRowClick(u.id), this);
+            return label;
+        });
+    }
+
+    /** 锻造区一行：可触摸行节点（Label overflow=NONE 自适应文本宽，居中）+ 居中 Label */
+    private makeForgeRow(parent: Node, x: number, y: number, fontSize: number, color: Color): Label {
+        const rowNode = new Node('ForgeRow');
+        rowNode.addComponent(UITransform).setContentSize(500, 30);
+        rowNode.setPosition(x, y, 0);
+        const label = rowNode.addComponent(Label);
+        label.fontSize = fontSize;
+        label.lineHeight = fontSize + 10;
+        label.color = color;
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        parent.addChild(rowNode);
+        return label;
+    }
+
+    /** 刷新锻造区文案与配色：可买金色 / 钱不够灰色 / 满级暗灰 */
+    private refreshForge(): void {
+        if (this._shardsLabel?.isValid) {
+            this._shardsLabel.string = `⚒ 精铸碎片 ${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
+        }
+        MetaManager.getUpgradeList().forEach((u, i) => {
+            const label = this._rowLabels[i];
+            if (!label?.isValid) {
+                return;
+            }
+            const lv = MetaManager.getLv(u.id);
+            const total = lv * u.perLv;
+            const price = MetaManager.getPrice(u.id);
+            if (price < 0) {
+                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${u.unit}+${total}）· 已满级`;
+                label.color = FORGE_COLOR_MAXED;
+            } else {
+                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${u.unit}+${total}）· ⚒${price} 点击升级`;
+                label.color = MetaManager.canAfford(u.id) ? FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED;
+            }
+        });
+    }
+
+    /** 点击升级行：买得起则扣费升级并刷新，否则忽略（颜色已示意不可买） */
+    private onForgeRowClick(id: MetaUpgradeId): void {
+        if (!MetaManager.buy(id)) {
+            return;
+        }
+        console.log(`[Result] 锻造升级 ${id} → Lv${MetaManager.getLv(id)}`);
+        this.refreshForge();
     }
 
     /** 弹窗浮现动效：0.85 → 1.06 → 1 弹性放大 */

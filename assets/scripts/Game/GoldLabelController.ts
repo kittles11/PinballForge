@@ -36,10 +36,10 @@ export class GoldLabelController extends Component {
     }
 
     protected start(): void {
-        // 主动初始化一次，避免开局停留在编辑器默认文案
+        // 主动初始化一次：显示实际开局金币（含 meta「开局资金」加成），避免开局停留在编辑器默认文案
         const label = this._label;
         if (label?.isValid) {
-            label.string = '💰 0';
+            label.string = `💰 ${GoldManager.instance?.currentGold ?? 0}`;
         }
     }
 

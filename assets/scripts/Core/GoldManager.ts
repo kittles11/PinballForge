@@ -1,5 +1,6 @@
 import { _decorator, Component } from 'cc';
 import { EventBus, GameEvents } from './EventBus';
+import { MetaManager } from './MetaManager';
 
 const { ccclass } = _decorator;
 
@@ -21,6 +22,8 @@ export class GoldManager extends Component {
 
     protected onLoad(): void {
         GoldManager.instance = this;
+        // ⚒ meta 永久升级「开局资金」：新局起始金币（普通开局与此处、重开 resetGold 共用同一加成值）
+        this.currentGold = MetaManager.getGoldBonus();
     }
 
     protected onDestroy(): void {
@@ -61,9 +64,9 @@ export class GoldManager extends Component {
         return this.currentGold;
     }
 
-    /** 新开局重置金币为 0（ResultDialog 再来一局时调用） */
+    /** 新开局重置金币：回到「开局资金」起始值（0 + meta 开局资金加成；ResultDialog 再来一局时调用） */
     public resetGold(): void {
-        this.currentGold = 0;
-        console.log('[Gold] 金币已重置为 0');
+        this.currentGold = MetaManager.getGoldBonus();
+        console.log(`[Gold] 金币已重置为开局资金 ${this.currentGold}`);
     }
 }
