@@ -380,3 +380,43 @@ export const CARD_DATABASE: CardData[] = [
         actionType: 'GainGold', value: 60,
     },
 ];
+
+/** 三选一稀有度权重（P1-3 对齐：固定 100/40/15，单抽约 64%/26%/10%，后续嫌平可在此调参或加 pity） */
+export const CARD_RARITY_WEIGHTS: Record<CardData['rarity'], number> = {
+    '普通': 100,
+    '稀有': 40,
+    '史诗': 15,
+};
+
+/**
+ * 按稀有度加权无放回抽取 count 张（战后三选一的抽取核心，纯函数）。
+ * 每轮以 权重/剩余总权重 选中一张并移出候选，直至抽满或池空；
+ * 某稀有度整层被滤空（如牌库满时 AddOrb 全滤）自动退化，rng 可注入（自检用确定性序列）。
+ */
+export function drawWeightedCards<T extends { rarity: CardData['rarity'] }>(
+    pool: T[], count: number, rng: () => number = Math.random,
+): T[] {
+    const candidates = [...pool];
+    const picked: T[] = [];
+    while (picked.length < count && candidates.length > 0) {
+        let total = 0;
+        for (const c of candidates) {
+            total += CARD_RARITY_WEIGHTS[c.rarity] ?? 0;
+        }
+        if (total <= 0) {
+            break;
+        }
+        let roll = rng() * total;
+        // 浮点兜底：未落入任何前缀段时取末张（roll 理论上 < total，防御 NaN/1.0 边界）
+        let chosenIdx = candidates.length - 1;
+        for (let i = 0; i < candidates.length; i++) {
+            roll -= CARD_RARITY_WEIGHTS[candidates[i].rarity] ?? 0;
+            if (roll < 0) {
+                chosenIdx = i;
+                break;
+            }
+        }
+        picked.push(candidates.splice(chosenIdx, 1)[0]);
+    }
+    return picked;
+}

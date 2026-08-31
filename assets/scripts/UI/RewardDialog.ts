@@ -8,7 +8,7 @@ import { PegComponent } from '../Pinball/PegComponent';
 import { DeckManager } from '../Core/DeckManager';
 import { OrbController } from '../Pinball/OrbController';
 import { OrbBalance } from '../Core/OrbBalance';
-import { CardData, CARD_DATABASE, OrbType, RelicType } from '../Core/DataModels';
+import { CardData, CARD_DATABASE, drawWeightedCards, OrbType, RelicType } from '../Core/DataModels';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, RELIC_INFO, ALL_RELIC_TYPES } from '../Core/RelicManager';
 import { GoldManager } from '../Core/GoldManager';
@@ -21,7 +21,8 @@ interface RewardCard {
     title: string;
     desc: string;
     archetype: string;
-    rarity: string;
+    /** 与 CardData.rarity 同型（drawWeightedCards 的泛型约束依赖它查权重表） */
+    rarity: CardData['rarity'];
     actionType: CardData['actionType'];
     orbType?: number;
     value?: number;
@@ -117,11 +118,11 @@ export class RewardDialog extends Component {
         }
         // 常规关卡 / 中途波次：战后卡牌三选一
         this._chestMode = false;
-        // ★ 卡库抽三：洗牌后取前 3 张（不重复），由 DataModels.CARD_DATABASE 统一供给
+        // ★ 卡库按稀有度加权抽三（100/40/15）：史诗球卡低频、普通救急卡高频；
+        //   无放回不重复；牌库满时池已滤掉 AddOrb（史诗层为空自动退化）
         const canAddOrb = DeckManager.instance?.canAddOrb() ?? true;
         const pool = REWARD_CARD_POOL.filter((card) => canAddOrb || card.actionType !== 'AddOrb');
-        this.shuffle(pool);
-        this._currentRewards = pool.slice(0, REWARD_CHOICE_COUNT);
+        this._currentRewards = drawWeightedCards(pool, REWARD_CHOICE_COUNT);
         this.setCardLabel(this.cardA, 0);
         this.setCardLabel(this.cardB, 1);
         this.setCardLabel(this.cardC, 2);
@@ -233,7 +234,7 @@ export class RewardDialog extends Component {
         g.fill();
     }
 
-    /** Fisher–Yates 原地洗牌（遗物数组专用） */
+    /** Fisher–Yates 原地洗牌（遗物数组专用，卡池抽取已改走 drawWeightedCards 加权抽取） */
     private shuffleType(arr: RelicType[]): void {
         for (let i = arr.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -419,15 +420,5 @@ export class RewardDialog extends Component {
                 }
             })
             .start();
-    }
-
-    /** Fisher–Yates 原地洗牌 */
-    private shuffle(arr: RewardCard[]): void {
-        for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            const tmp = arr[i];
-            arr[i] = arr[j];
-            arr[j] = tmp;
-        }
     }
 }
