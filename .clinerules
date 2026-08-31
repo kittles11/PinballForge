@@ -1,0 +1,14 @@
+# Cocos Creator 3.8.x + Cline 开发规则
+
+## 1. 组件与属性编写规范
+- 所有自定义组件必须使用 `@ccclass('ClassName')` 并 `export class ClassName extends Component`
+- 严禁使用非空断言修饰 `@property`（如 `node: Node = null!`），所有 `@property` 应定义为可选类型或赋予合理的默认值
+- 任何通过 `@property` 引入的节点或组件，在使用前必须判空（如 `if (!this.targetNode) { ... }`）
+
+## 2. 节点查找与生命周期
+- 避免直接在 `onLoad` 中访问其他单例或跨节点的未初始化属性；复杂初始化优先放到 `start()` 或显式的方法中
+- 查找子节点时使用可选链与安全转换：`const comp = this.node.getChildByName('Foo')?.getComponent(Foo);`
+
+## 3. 架构与解耦
+- 模块间通信统一使用全局事件总线（EventBus），避免脚本间相互 import 导致循环依赖（Circular Dependency）
+- 资源（Prefab/Audio/Texture）如需代码动态加载，请统一放置在 `assets/resources/` 目录下，并使用 `resources.load`
