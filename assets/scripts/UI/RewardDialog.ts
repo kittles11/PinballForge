@@ -50,13 +50,13 @@ const REWARD_CARD_POOL: RewardCard[] = CARD_DATABASE.map((c) => ({
 export class RewardDialog extends Component {
     /** 三张卡牌按钮节点（在 Inspector 拖入 UILayer/RewardDialog 下的 card A/B/C） */
     @property(Node)
-    cardA: Node = null!;
+    cardA: Node | null = null;
 
     @property(Node)
-    cardB: Node = null!;
+    cardB: Node | null = null;
 
     @property(Node)
-    cardC: Node = null!;
+    cardC: Node | null = null;
 
     /** 当前展示的三个奖励（与 cardA/B/C 一一对应） */
     private _currentRewards: RewardCard[] = [];
@@ -165,7 +165,7 @@ export class RewardDialog extends Component {
     }
 
     /** 绑定单张卡牌的点击事件（点击下标即奖励下标，闭包捕获保证一一对应） */
-    private bindCard(card: Node, index: number): void {
+    private bindCard(card: Node | null, index: number): void {
         if (!card?.isValid) {
             console.warn(`[Reward] 卡牌节点 card${['A', 'B', 'C'][index] ?? index} 未配置，点击该卡无效`);
             return;
@@ -177,7 +177,7 @@ export class RewardDialog extends Component {
         }, this);
     }
 
-    private setCardLabel(card: Node, index: number): void {
+    private setCardLabel(card: Node | null, index: number): void {
         if (!card?.isValid) {
             return;
         }
@@ -208,7 +208,7 @@ export class RewardDialog extends Component {
         g.fill();
     }
 /** 【传奇藏宝箱】卡牌填充：把第 index 个候选遗物渲染到 card 节点；无候选则隐藏该卡 */
-    private setRelicCard(card: Node, index: number): void {
+    private setRelicCard(card: Node | null, index: number): void {
         if (!card?.isValid) {
             return;
         }
@@ -391,9 +391,13 @@ export class RewardDialog extends Component {
             return;
         }
         Tween.stopAllByTarget(node);
-        Tween.stopAllByTarget(this.cardA);
-        Tween.stopAllByTarget(this.cardB);
-        Tween.stopAllByTarget(this.cardC);
+        // 三张卡可能未在场景接线（cardA/B/C 为可空 @property），stopAllByTarget 不接受 null
+        const cards = [this.cardA, this.cardB, this.cardC];
+        for (const card of cards) {
+            if (card?.isValid) {
+                Tween.stopAllByTarget(card);
+            }
+        }
         node.setScale(0.8, 0.8, 1);
         tween(node)
             .to(0.09, { scale: new Vec3(1.06, 1.06, 1) })
@@ -401,7 +405,6 @@ export class RewardDialog extends Component {
             .start();
 
         // 三张卡牌依次浮入（延迟递增）
-        const cards = [this.cardA, this.cardB, this.cardC];
         cards.forEach((card, i) => {
             if (!card?.isValid) {
                 return;

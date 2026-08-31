@@ -6,7 +6,9 @@
  * 规则 1b @ccclass 名全局唯一（Cocos 类系统按名注册，重名会互相覆盖）；
  * 规则 3  导入规范：统一 `import { ... } from 'cc'` 且装饰器解构使用，禁止 _decorator.xxx 内联；
  * 规则 4  无运行时循环引用：项目内模块 import 图无环
- *         （import type 为编译期擦除的类型边，不计入运行时依赖）。
+ *         （import type 为编译期擦除的类型边，不计入运行时依赖）；
+ * 规则 5  @property 禁用 null! 非空断言：必须 `T | null = null` 并在用前判空，
+ *         否则「场景未接线」在类型系统里隐身、运行时才炸（本规则此前只写在 .clinerules、无机器校验）。
  */
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname, resolve, relative } from 'path';
@@ -118,6 +120,34 @@ check('规则1b @ccclass 名全局唯一', dup.length === 0, dup.join('; '));
 
 // ---- 规则 3：装饰器解构 ----
 check('规则3 装饰器统一解构（无 _decorator.xxx 内联）', inlineDecorator.length === 0, inlineDecorator.join('; '));
+
+// ---- 规则 5：@property 禁用非空断言（.clinerules 第 5 条）----
+// 此前该规则只写在 .clinerules 里、无任何机器校验，导致 7 处 `= null!` 长期违规无人发现。
+// `= null!` 会让「场景未接线」在类型系统里隐身（声明成非空却运行时为 null），
+// 必须写成 `T | null = null` 并在用前判空，接线缺失才会在使用点暴露。
+const nullBangProp: string[] = [];
+const PROP_DECL = /@property\b/;
+const NULL_BANG = /=\s*null\s*!/;
+for (const [key, file] of fileByKey) {
+    const lines = stripComments(readFileSync(file, 'utf8')).split(/\r?\n/);
+    let armed = false; // 上一非空行是 @property 装饰器，本行应是其声明体
+    for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
+        if (ln.trim() === '') continue;
+        if (armed && NULL_BANG.test(ln)) {
+            nullBangProp.push(`${key}:${i + 1}`);
+            armed = false;
+            continue;
+        }
+        if (PROP_DECL.test(ln)) {
+            if (NULL_BANG.test(ln)) nullBangProp.push(`${key}:${i + 1}`);
+            armed = true;
+            continue;
+        }
+        armed = false;
+    }
+}
+check('规则5 @property 禁用 null! 非空断言', nullBangProp.length === 0, nullBangProp.join('; '));
 
 // ---- 规则 4：DFS 三色标记找环 ----
 const WHITE = 0;

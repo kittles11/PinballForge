@@ -28,15 +28,15 @@ const FORGE_COLOR_MAXED = new Color(120, 120, 120, 255);
 export class ResultDialog extends Component {
     /** 结算标题文本 */
     @property(Label)
-    titleLabel: Label = null!;
+    titleLabel: Label | null = null;
 
     /** 结算描述文本 */
     @property(Label)
-    descLabel: Label = null!;
+    descLabel: Label | null = null;
 
     /** 再来一局按钮节点 */
     @property(Node)
-    restartBtn: Node = null!;
+    restartBtn: Node | null = null;
 
     /** 场景重载防抖：防连点重复 loadScene 引发双重销毁竞态 */
     private _restarting = false;

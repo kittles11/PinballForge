@@ -21,7 +21,7 @@ export class CastleController extends Component {
     public maxHp: number = 100;
 
     @property(Label)
-    public hpLabel: Label = null!;
+    public hpLabel: Label | null = null;
 
     public currentHp: number = 100;
 

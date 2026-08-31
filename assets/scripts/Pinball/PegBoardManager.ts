@@ -35,7 +35,7 @@ const BOARD_HEIGHT = 560;
 export class PegBoardManager extends Component {
     /** 钉子预制体（需挂 PegComponent + Collider2D） */
     @property(Prefab)
-    pegPrefab: Prefab = null!;
+    pegPrefab: Prefab | null = null;
 
     /** 每局炸药钉数量（固定 1 颗） */
     @property
