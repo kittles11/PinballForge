@@ -75,4 +75,5 @@ check('混合池不含 Boss（Boss 波由 isBoss 单独指定）', !poolTypes.ha
 check('Boss 解锁章节为哨兵值 99（永不入池）', ENEMY_UNLOCK_CHAPTER[EnemyType.Boss] === 99);
 
 console.log(failed === 0 ? '\n全部自检通过 ✔' : `\n存在 ${failed} 项失败 ✘`);
-process.exit(failed === 0 ? 0 : 1);
+// 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）
+if (failed > 0) process.exit(1);

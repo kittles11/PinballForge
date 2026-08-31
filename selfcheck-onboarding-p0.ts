@@ -100,4 +100,5 @@ check('锚点：10-10 Boss = 4761', hp(10, 10) * 4.5 === 4761);
 check('锚点：50-10 Boss = 20961', hp(50, 10) * 4.5 === 20961);
 
 console.log(failed === 0 ? '\n✅ P0 自检全部通过' : `\n❌ ${failed} 项未通过`);
-process.exit(failed === 0 ? 0 : 1);
+// 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）
+if (failed > 0) process.exit(1);

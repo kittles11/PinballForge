@@ -101,4 +101,5 @@ check('霜冻冰球卡牌文案已去掉「落入急冻槽」限定',
     !/落入急冻槽/.test(models));
 
 console.log(failed === 0 ? '\n全部自检通过 ✔' : `\n存在 ${failed} 项失败 ✘`);
-process.exit(failed === 0 ? 0 : 1);
+// 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）
+if (failed > 0) process.exit(1);

@@ -1,18 +1,17 @@
 import {
     _decorator, Component, Node, Prefab, Graphics, Vec2, Vec3, Color,
     input, Input, EventTouch, RigidBody2D, instantiate,
+    PhysicsSystem2D, CircleCollider2D,
 } from 'cc';
 import { DeckManager } from '../Core/DeckManager';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { OrbController } from '../Pinball/OrbController';
+import { PegComponent } from '../Pinball/PegComponent';
+import { simulateAimPreview, PreviewPeg } from '../Core/AimPreview';
 import { OrbType } from '../Core/DataModels';
 
 const { ccclass, property } = _decorator;
 
-/** 虚线段长（px） */
-const DASH_LENGTH = 20;
-/** 虚线间隔（px） */
-const DASH_GAP = 15;
 /** 手指距发射点小于该值视为无效瞄准（不发射） */
 const MIN_AIM_LENGTH = 15;
 /** 发射方向允许的角度范围（度）：-165°（左下方）~ -15°（右下方） */
@@ -22,6 +21,19 @@ const MAX_LAUNCH_ANGLE = -15 * Math.PI / 180;
 const SCATTER_ANGLE = (15 * Math.PI) / 180;
 const SCATTER_COS = Math.cos(SCATTER_ANGLE);
 const SCATTER_SIN = Math.sin(SCATTER_ANGLE);
+
+/** 弹珠半径（与钉子半径求和判定预测线相交；与 orbPrefab 碰撞体一致） */
+const ORB_RADIUS = 16;
+/** 预测线积分步长（半帧）：弹珠实际初速 ~2400px/s，粗步长会把钉子跳过去 */
+const PREVIEW_DT = 1 / 120;
+/** 预测线点列间距（px）：沿弧长均匀撒点 */
+const PREVIEW_DOT_SPACING = 26;
+/** 预测点半径 */
+const PREVIEW_DOT_R = 3.5;
+/** 场地左右半宽近似值（物理墙贴设计分辨率 720 边缘，留弹珠半径余量） */
+const FIELD_HALF_W = 352;
+/** 底部截断线：漏斗接收区上沿（y 低于此即进入漏斗区，预测到此为止） */
+const FUNNEL_Y = -340;
 
 /** 各球种瞄准线颜色（使用纯数字键，彻底杜绝模块加载期循环引用未定义） */
 const AIM_COLORS: Record<number, Color> = {
@@ -48,18 +60,29 @@ export class LauncherController extends Component {
     @property
     launchSpeed = 1200;
 
-    @property
-    trajectoryLength = 400;
-
     /** 发射冷却（秒） */
     @property
     launchCooldown = 0.25;
+
+    /**
+     * 预测线初速倍率。fireOrb 实际是 linearVelocity 赋值 + 同值 impulse 的双重叠加
+     * （引擎源码 applyLinearImpulseToCenter 零换算直传 Box2D，Δv=v）→ 理论初速 = 2×launchSpeed。
+     * ponytail: 实机校准口——若预测线与真实弹道系统性偏短/偏长，微调此值（而非改发射逻辑）。
+     */
+    @property
+    previewSpeedScale = 2;
+
+    /** 预测线模拟总时长（秒）：决定预测线长度 */
+    @property
+    previewTime = 0.6;
 
     private _aimDir: Vec2 | null = null;
     private _inputRegistered = false;
     private _modalOpen = false;
     private _activeTouchId: number | null = null;
     private _lastLaunchTime = 0;
+    /** 钉子快照（TOUCH_START 时收集一次；拖拽期间钉子不会变化） */
+    private _pegSnapshot: PreviewPeg[] | null = null;
 
     private readonly _tmpUIPos = new Vec2();
     private readonly _tmpDir = new Vec2();
@@ -132,6 +155,7 @@ export class LauncherController extends Component {
     private onTouchStart(event: EventTouch): void {
         if (this._activeTouchId !== null || this._modalOpen) return;
         this._activeTouchId = event.getID();
+        this.refreshPegSnapshot();
         this.updateAim(event);
         this.drawTrajectory();
     }
@@ -192,6 +216,27 @@ export class LauncherController extends Component {
         this._aimDir = this._tmpDir;
     }
 
+    /** 收集全场钉子快照（世界坐标 → trajectoryGraphics 本地系；力竭钉 Collider 已禁用，物理上不存在，过滤掉） */
+    private refreshPegSnapshot(): void {
+        this._pegSnapshot = null;
+        const layer = this.launcherNode?.parent;
+        const graphics = this.trajectoryGraphics;
+        if (!layer?.isValid || !graphics?.isValid) return;
+
+        const comps = layer.getComponentsInChildren(PegComponent);
+        const pegs: PreviewPeg[] = [];
+        for (const c of comps) {
+            const n = c.node;
+            if (!n?.isValid || !n.activeInHierarchy || c.isExhausted) continue;
+            n.getWorldPosition(this._tmpWorld);
+            graphics.inverseTransformPoint(this._tmpLocal, this._tmpWorld);
+            // 半径取 CircleCollider2D 真值，异常回退 16
+            const col = n.getComponent(CircleCollider2D);
+            pegs.push({ x: this._tmpLocal.x, y: this._tmpLocal.y, r: col ? col.radius : ORB_RADIUS });
+        }
+        this._pegSnapshot = pegs;
+    }
+
     private drawTrajectory(): void {
         if (!this.trajectoryGraphics?.isValid || !this.launcherNode?.isValid || !this._aimDir) {
             return;
@@ -208,19 +253,60 @@ export class LauncherController extends Component {
         const nextType = DeckManager.instance?.peekNextOrbType() ?? 0;
         const lineColor = AIM_COLORS[nextType] ?? AIM_COLORS[0];
 
-        g.clear();
-        g.lineWidth = 3;
-        g.strokeColor = lineColor;
+        // 首段重力抛物线模拟：初速 = launchSpeed×倍率（对齐 fireOrb 的 velocity+impulse 叠加），
+        // 重力取物理系统真值；命中钉子/出界/进漏斗即截断（不做反弹链）
+        const sim = simulateAimPreview({
+            startX: sx,
+            startY: sy,
+            vx: dir.x * this.launchSpeed * this.previewSpeedScale,
+            vy: dir.y * this.launchSpeed * this.previewSpeedScale,
+            gravity: PhysicsSystem2D.instance?.gravity?.y ?? -320,
+            orbR: ORB_RADIUS,
+            maxTime: this.previewTime,
+            dt: PREVIEW_DT,
+            fieldHalfW: FIELD_HALF_W,
+            floorY: FUNNEL_Y,
+            pegs: this._pegSnapshot ?? [],
+        });
 
-        const total = Math.max(0, this.trajectoryLength);
-        let d = 0;
-        while (d < total) {
-            const seg = Math.min(DASH_LENGTH, total - d);
-            g.moveTo(sx + dir.x * d, sy + dir.y * d);
-            g.lineTo(sx + dir.x * (d + seg), sy + dir.y * (d + seg));
-            d += seg + DASH_GAP;
+        g.clear();
+        g.fillColor = lineColor;
+
+        // 沿弧长均匀撒点（Peggle 式点列：弯曲轨迹上等距实心点，起点处不画）
+        const pts = sim.points;
+        let px = pts[0][0];
+        let py = pts[0][1];
+        let need = PREVIEW_DOT_SPACING;
+        for (let i = 1; i < pts.length; i++) {
+            const qx = pts[i][0];
+            const qy = pts[i][1];
+            const dx = qx - px;
+            const dy = qy - py;
+            let segLen = Math.sqrt(dx * dx + dy * dy);
+            if (segLen > 0) {
+                const ux = dx / segLen;
+                const uy = dy / segLen;
+                while (segLen >= need) {
+                    px += ux * need;
+                    py += uy * need;
+                    g.circle(px, py, PREVIEW_DOT_R);
+                    segLen -= need;
+                    need = PREVIEW_DOT_SPACING;
+                }
+                px += ux * segLen;
+                py += uy * segLen;
+            }
+            need -= segLen;
         }
-        g.stroke();
+        g.fill();
+
+        // 命中高亮：目标钉子外圈描边（含弹珠半径余量，视觉上「球将撞到这里」）
+        if (sim.hitPeg) {
+            g.lineWidth = 4;
+            g.strokeColor = lineColor;
+            g.circle(sim.hitPeg.x, sim.hitPeg.y, sim.hitPeg.r + ORB_RADIUS + 4);
+            g.stroke();
+        }
     }
 
     private clearTrajectory(): void {

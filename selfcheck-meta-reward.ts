@@ -141,4 +141,5 @@ check('GoldLabelController.start：HUD 显示实际开局金币（硬编码 💰
     /GoldManager\.instance\?\.currentGold \?\? 0/.test(goldLabel) && !/'💰 0'/.test(goldLabel));
 
 console.log(failed === 0 ? '\n✅ P1 死亡补偿 meta 自检全部通过' : `\n❌ ${failed} 项未通过`);
-process.exit(failed === 0 ? 0 : 1);
+// 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）
+if (failed > 0) process.exit(1);
