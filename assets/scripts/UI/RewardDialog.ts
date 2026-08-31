@@ -313,12 +313,13 @@ export class RewardDialog extends Component {
                     this._selecting = false;
                     return;
                 }
-                DeckManager.instance?.addOrbToDeck(orbType as OrbType);
-                console.log(`[Reward] [${reward.title}] 弹珠类型 ${orbType} 已永久加入卡组`);
-                // 统一升级入口已建立；本阶段保持 Lightning 严格三连发，暂不启用 5 连发效果。
+                // 过载雷球：雷球散射数 +2（3→5 连发）；LauncherController.fireLightningBurst 消费 splitCount
+                let suffix = '';
                 if (reward.id === 'lightning_rage') {
                     OrbBalance.applyUpgrade('lightning_projectile', 2);
+                    suffix = '（雷球升级 5 连发）';
                 }
+                console.log(`[Reward] [${reward.title}] 弹珠类型 ${orbType} 已永久加入卡组${suffix}`);
                 break;
             }
             case 'BuffHeavy': {

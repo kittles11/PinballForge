@@ -137,6 +137,21 @@ export class OrbBalance {
         this.frost.baseDamage = DEFAULT_FROST.baseDamage + bonus;
     }
 
+    /**
+     * 雷球扇形散射偏移角（弧度）序列：n 颗均匀分布，单颗间隔 angle。
+     * n=3 → [-angle, 0, +angle]（与旧版 left/dir/right 三连发完全等价）；
+     * n=5 → [-2a, -a, 0, +a, +2a]（过载雷球 5 连发）；偶数自动中心偏半档，无特判。
+     * 纯函数（零 cc 依赖），供自检直接真跑。
+     */
+    static lightningSpread(count: number, angle: number): number[] {
+        const n = Math.max(1, Math.floor(count));
+        const offsets: number[] = [];
+        for (let i = 0; i < n; i++) {
+            offsets.push((i - (n - 1) / 2) * angle);
+        }
+        return offsets;
+    }
+
     static reset(): void {
         Object.assign(this.normal, DEFAULT_NORMAL);
         Object.assign(this.lightning, DEFAULT_LIGHTNING);

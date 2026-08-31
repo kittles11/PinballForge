@@ -7,6 +7,7 @@ import { DeckManager } from '../Core/DeckManager';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { OrbController } from '../Pinball/OrbController';
 import { PegComponent } from '../Pinball/PegComponent';
+import { OrbBalance } from '../Core/OrbBalance';
 import { simulateAimPreview, PreviewPeg } from '../Core/AimPreview';
 import { OrbType } from '../Core/DataModels';
 
@@ -17,10 +18,6 @@ const MIN_AIM_LENGTH = 15;
 /** 发射方向允许的角度范围（度）：-165°（左下方）~ -15°（右下方） */
 const MIN_LAUNCH_ANGLE = -165 * Math.PI / 180;
 const MAX_LAUNCH_ANGLE = -15 * Math.PI / 180;
-/** 裂变雷球左右散射角 15° */
-const SCATTER_ANGLE = (15 * Math.PI) / 180;
-const SCATTER_COS = Math.cos(SCATTER_ANGLE);
-const SCATTER_SIN = Math.sin(SCATTER_ANGLE);
 
 /** 弹珠半径（与钉子半径求和判定预测线相交；与 orbPrefab 碰撞体一致） */
 const ORB_RADIUS = 16;
@@ -335,19 +332,25 @@ export class LauncherController extends Component {
         this.fireOrb(prefab, orbType, dir, false);
     }
 
+    /**
+     * 雷球扇形散射：数量与间隔消费 OrbBalance.lightning（splitCount/scatterAngle）。
+     * 基础 3 连发（-15°/0/+15°）；「过载雷球」卡经 applyUpgrade('lightning_projectile', 2)
+     * 把 splitCount 推到 5 → ±30° 五连发。中心球为主球（入槽回收），其余为副球（不回收，卡组守恒）。
+     */
     private fireLightningBurst(prefab: Prefab, dir: Vec2): void {
-        const left = new Vec2(
-            dir.x * SCATTER_COS - dir.y * SCATTER_SIN,
-            dir.x * SCATTER_SIN + dir.y * SCATTER_COS,
-        );
-        const right = new Vec2(
-            dir.x * SCATTER_COS + dir.y * SCATTER_SIN,
-            -dir.x * SCATTER_SIN + dir.y * SCATTER_COS,
-        );
-
-        this.fireOrb(prefab, OrbType.Lightning, dir, false);
-        this.fireOrb(prefab, OrbType.Lightning, left, true);
-        this.fireOrb(prefab, OrbType.Lightning, right, true);
+        const { splitCount, scatterAngle } = OrbBalance.lightning;
+        const offsets = OrbBalance.lightningSpread(splitCount, scatterAngle);
+        const centerIdx = (offsets.length - 1) / 2;
+        offsets.forEach((offset, i) => {
+            const cos = Math.cos(offset);
+            const sin = Math.sin(offset);
+            // 平面旋转（与旧版 left/right 手算公式一致）
+            const rotated = new Vec2(
+                dir.x * cos - dir.y * sin,
+                dir.x * sin + dir.y * cos,
+            );
+            this.fireOrb(prefab, OrbType.Lightning, rotated, i !== centerIdx);
+        });
     }
 
     private fireOrb(prefab: Prefab, orbType: number, dir: Vec2, isSideKick: boolean): boolean {
