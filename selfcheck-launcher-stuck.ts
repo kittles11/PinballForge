@@ -1,15 +1,18 @@
 /**
- * 发射上限判断 & 物理防卡死 —— 源码级 + 纯逻辑自检（不依赖 cc 运行时）。
+ * 发射链路回归 & 物理防卡死 —— 源码级 + 纯逻辑自检（不依赖 cc 运行时）。
  * 运行：node --experimental-transform-types selfcheck-launcher-stuck.ts
  *
  * 背景：历史致命 bug——launchOrb() 同屏球数判断符号写反（<=），0 颗球也被拦截，
  * 控台报 `[Launcher] 同屏存活达到上限: 存活=0 最大=6 上限=4` 导致无法发射。
+ * 该拦截式上限已在 P0 基线整体移除（且从未进入 git 历史）：同屏总量由卡组守恒天然封顶
+ * （masterDeck ≤8 + 雷球副球凭空 ≤4 = 同屏 ≤12 颗刚体，无物理压力；12s 存活保底兜底），
+ * 强行恢复只会新增「满员拦截玩家发射」的负面体验。
  * 本自检锁定：
- *  1) LauncherController 上限判断必须是「超过才拦截」（>），存活=0 必可发射；
- *  2) 旧错误日志文本不得回潮；
+ *  1) 旧错误日志文本不得回潮（该 bug 的观察点）；
+ *  2) 雷球散射 splitCount 配置存在（LauncherController.fireLightningBurst 的数据源）；
  *  3) OrbController 防卡死链路完整（低速顶开 → 递进力度 → 强制结算 → 12s 保底）。
- * 说明：不 import 项目文件（OrbBalance 内部使用无扩展名 import，Node ESM 无法解析），
- * 一律从源码正则提取真值，同时顺带锁定「源码形状」本身，符号再写反必挂。
+ * 说明：不 import 项目文件（cc 别名无法在 Node ESM 下解析），一律从源码正则提取真值，
+ * 同时顺带锁定「源码形状」本身。
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -28,30 +31,15 @@ function check(name: string, cond: boolean): void {
     }
 }
 
-// ── 1. 上限常量与比较符号（核心回归锁：符号写反必挂）──
-const maxAlive = Number(launcherSrc.match(/MAX_ALIVE_ORBS\s*=\s*(\d+)/)?.[1]);
-check(`MAX_ALIVE_ORBS 已定义且为正整数（实际=${maxAlive}）`, Number.isInteger(maxAlive) && maxAlive > 0);
-
-// 判断必须是 aliveCount + toAdd > MAX_ALIVE_ORBS；任何 < / <= / >= 形态都视为符号写反
-const judge = launcherSrc.match(/if\s*\(\s*aliveCount\s*\+\s*toAdd\s*(>=|<=|>|<)\s*MAX_ALIVE_ORBS\s*\)/);
-check(`同屏上限判断使用 >（超过才拦截；实际符号='${judge?.[1] ?? '未找到'}'）`, judge?.[1] === '>');
-
-// ── 2. 旧错误日志不得回潮 ──
+// ── 1. 旧错误日志不得回潮（历史致命 bug 的观察点）──
 check('旧错误日志「同屏存活达到上限」已从源码移除', !launcherSrc.includes('同屏存活达到上限'));
 
-// ── 3. 拦截场景真值表（公式与源码判断一致：拦截 ⇔ alive + toAdd > max）──
-// splitCount 从 OrbBalance 源码提取，保证与真实雷球分裂配置一致
+// ── 2. 雷球散射配置（LauncherController.fireLightningBurst 消费 OrbBalance.lightning.splitCount）──
+// splitCount 从 OrbBalance 源码提取，保证与真实雷球分裂配置一致（过载雷球卡将其 3→5）
 const splitCount = Number(balanceSrc.match(/splitCount:\s*(\d+)/)?.[1]);
 check(`雷球 splitCount 已定义（实际=${splitCount}）`, Number.isInteger(splitCount) && splitCount > 0);
-const blocked = (alive: number, toAdd: number): boolean => alive + toAdd > maxAlive;
-
-check('存活=0 单发 → 允许发射（本次致命 bug 场景）', !blocked(0, 1));
-check(`存活=0 雷球分裂 ${splitCount} 颗 → 允许发射`, !blocked(0, splitCount));
-check(`存活=${maxAlive}（满员）单发 → 拦截`, blocked(maxAlive, 1));
-check(`存活=${maxAlive - 1} 雷球分裂 ${splitCount} 颗 → 拦截（预留槽位防超限）`, blocked(maxAlive - 1, splitCount));
-check(`存活=${maxAlive - 1} 单发 → 允许发射`, !blocked(maxAlive - 1, 1));
-
-// ── 4. OrbController 物理防卡死链路完整 ──
+check('发射散射消费配置（lightningSpread(splitCount, scatterAngle)）',
+    /lightningSpread\(splitCount,\s*scatterAngle\)/.test(launcherSrc));
 check('STUCK_MAX_BUMPS 强制结算上限已定义', /STUCK_MAX_BUMPS\s*=\s*\d+/.test(orbSrc));
 check('递进力度字段 _stuckBumps 已定义', /_stuckBumps\s*=\s*0/.test(orbSrc));
 check('顶开力度随失败次数递增（IMPULSE * boost）', /STUCK_IMPULSE_[XY]\s*\*\s*boost/.test(orbSrc));

@@ -10,7 +10,11 @@
  */
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
-import { OrbBalance } from './assets/scripts/Core/OrbBalance.ts';
+import { register } from 'node:module';
+// 自包含解析：先注册相对路径补 .ts 的 hook（ts-resolve-hook.mjs），再动态加载 OrbBalance。
+// 静态 import 会在 hook 注册前解析（ESM 静态依赖先于任何代码求值），故必须用顶层 await 动态 import。
+register('./ts-resolve-hook.mjs', import.meta.url);
+const { OrbBalance } = await import('./assets/scripts/Core/OrbBalance.ts');
 
 const ROOT = resolve(process.cwd());
 const SCRIPTS = join(ROOT, 'assets', 'scripts');

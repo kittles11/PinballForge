@@ -57,7 +57,10 @@ check('关闭按钮/遮罩触摸绑定 closeDialog', /TOUCH_END,\s*this\.closeDi
 
 // —— 5. DeckManager 自举与数据源 ——
 check('DeckManager.start 自举 DeckButtonController.ensureMounted', /DeckButtonController\.ensureMounted\(\)/.test(deckSrc));
-check('DeckManager.start 自举 DeckViewDialog.ensureMounted', /DeckViewDialog\.ensureMounted\(\)/.test(deckSrc));
+// 弹窗自举已从 DeckManager 迁出（本类不再反向 import 它，解除循环引用）：
+// 由 DeckViewDialog 模块级自举负责（bootstrap 注册场景启动钩子 + ensureMounted 兜底挂载）
+const dialogBoot = dialogSrc.match(/DeckViewDialog\.bootstrap\(\);\s*[\r\n]+\s*DeckViewDialog\.ensureMounted\(\);/);
+check('DeckViewDialog 模块级自举存在（bootstrap + ensureMounted，替代 DeckManager 反向挂载）', !!dialogBoot);
 check('masterDeck 为 public（背包面板统计各球种数量）', /public\s+masterDeck\s*:\s*number\[\]/.test(deckSrc));
 
 // —— 6. 牌库统计聚合公式真值表（与 buildDeckText 行为一致） ——

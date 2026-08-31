@@ -8,7 +8,7 @@
  *  3) 封通道不变量：棋盘可用宽度内任意竖直下落线，到「前两行」最近钉的水平距离 ≤ 列距一半
  *     （即不存在宽度超过半列距的整列贯通通道；旧金字塔版型顶层仅 1~3 钉时该值远超列距，正是直落漏斗漏洞）；
  *  4) PEG_LAYOUTS 恰由 LAYOUT_A / LAYOUT_B / LAYOUT_C 组成；
- *  5) 🎒 按钮顶边不进关卡标题带（WaveLabel y≈590±25）与遗物栏瓷片带（y∈[530,570]），右缘落在 20:9 窄屏可视半宽 284 内。
+ *  5) 🎒 按钮右上角贴顶落位契约：与顶部 HUD 行同行、高于怪物走廊，窄屏由 resolveX 钳制保证完整可见。
  * 说明：不 import 项目文件（cc 别名无法在 Node ESM 下解析），一律从源码正则提取真源，顺带锁定「源码形状」。
  */
 import { readFileSync } from 'node:fs';
@@ -81,14 +81,24 @@ for (const [name, layout] of layouts) {
         worst <= spacingX / 2 + 1e-9);
 }
 
-// —— 4. 🎒 按钮避让关卡标题 / 遗物栏 / 窄屏裁切 ——
+// —— 4. 🎒 按钮落位：右上角贴顶契约（P0 v2 布局）——
+// 36×36 徽章钉 (BTN_X, BTN_Y)=(290, 600)：与顶部 HUD 行（城堡/标题/金币 y≈590）同行贴顶、
+// 横向在金币右侧与标题（x=0）错开；Y 高于怪物走廊（≈480）全程零遮挡；
+// 窄屏可见性由 resolveX() 按「可视半宽 - 半径 - 8」钳制（常量 X 仅是宽屏期望位）。
 const btnX = Number(btnSrc.match(/const BTN_X\s*=\s*(-?[\d.]+)/)?.[1] ?? 0);
 const btnY = Number(btnSrc.match(/const BTN_Y\s*=\s*(-?[\d.]+)/)?.[1] ?? 0);
-const btnW = Number(btnSrc.match(/const BTN_WIDTH\s*=\s*(\d+)/)?.[1] ?? 96);
-const btnH = Number(btnSrc.match(/const BTN_HEIGHT\s*=\s*(\d+)/)?.[1] ?? 44);
-check('🎒 按钮顶边 ≤ 530（同时避开标题带下缘 565 与遗物瓷片带顶 530）', btnY + btnH / 2 <= 530);
-check('🎒 按钮整体仍属顶部区（未坠入钉板/漏斗区）', btnY > 0);
-check('🎒 按钮右缘 ≤ 284（20:9 窄屏可视半宽 640×9/20）', btnX + btnW / 2 <= 284);
+const btnSize = Number(btnSrc.match(/const BTN_SIZE\s*=\s*(\d+)/)?.[1] ?? 36);
+const CANVAS_HALF_H = 640; // 720×1280 画布锚点居中
+const CORRIDOR_Y = 480;    // 怪物行进走廊上沿
+check(`🎒 按钮贴顶可见（顶边 ${btnY + btnSize / 2} ≤ 画布顶 ${CANVAS_HALF_H}）`,
+    btnY > 0 && btnY + btnSize / 2 <= CANVAS_HALF_H);
+check(`🎒 按钮高于怪物走廊（底边 ${btnY - btnSize / 2} ≥ 走廊上沿 ${CORRIDOR_Y}，行进零遮挡）`,
+    btnY - btnSize / 2 >= CORRIDOR_Y);
+check('🎒 按钮在金币右侧 HUD 带内（X > 金币位 210，与标题 x=0 横向错开）', btnX > 210);
+check('🎒 窄屏钳制：resolveX 按可视半宽收半径与余量（20:9 下右缘 ≤ halfW - 8，徽章完整可见）',
+    /Math\.min\(BTN_X,\s*halfW\s*-\s*BTN_SIZE\s*\/\s*2\s*-\s*8\)/.test(btnSrc));
+check('🎒 onLoad 强制钉位（场景误摆旧位置也会被纠正）',
+    /this\.node\.setPosition\(DeckButtonController\.resolveX\(\),\s*BTN_Y,\s*0\)/.test(btnSrc));
 
 console.log(failed === 0 ? '\n✅ 钉板版型 + 按钮落位自检全部通过' : `\n❌ ${failed} 项自检失败`);
 process.exitCode = failed === 0 ? 0 : 1;
