@@ -83,13 +83,14 @@ class LevelManagerClass {
         };
     }
 
-    /** 关卡 +1；超过 10 则章节 +1 并重置关卡；自动保存到本地存档 */
+    /** 关卡 +1；超过 10 则章节 +1 并重置关卡（封顶第 50 章，不再越界）；自动保存到本地存档 */
     nextLevel(): void {
         this.currentLevel += 1;
-        const chapterIdx = this.currentChapter - 1;
         if (this.currentLevel > LEVELS_PER_CHAPTER) {
             this.currentLevel = 1;
-            this.currentChapter = chapterIdx >= MAX_CHAPTER ? MAX_CHAPTER : (chapterIdx + 2);
+            // 原写法用 0 基的 chapterIdx(0~49) 与 1 基的 MAX_CHAPTER(50) 比较，条件恒假：
+            // 50-10 通关后 chapterIdx+2 会把进度推到不存在的第 51 章，血量公式继续外推。
+            this.currentChapter = Math.min(MAX_CHAPTER, this.currentChapter + 1);
         }
         console.log(`[LevelManager] 进入 ${this.getProgressText()}`);
         this.save();
