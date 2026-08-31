@@ -28,4 +28,9 @@ node_modules/
 #//////////////////////////
 .creator/
 *.bak
+# 后缀式备份（MainScene.scene.bak-surgery 等）：tools/ 下的一次性修复脚本会生成，
+# git 历史本身就是备份，这类文件一律不入库。*.bak 匹配不到，故单列。
+*.bak-*
+*.orig
+*.rej
 *.zip
