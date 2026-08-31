@@ -2,8 +2,8 @@
  * M2 运营基建自检（纯 Node，无引擎依赖）—— Analytics 埋点壳行为校验：
  *   node --experimental-transform-types --import ./register-ts-hook.mjs selfcheck-analytics.ts
  *
- * 覆盖：① track 入缓冲与属性保真 ② 环形缓冲 ≤BUF_MAX 且裁掉最旧 ③ localStorage 持久化与断电恢复
- *       ④ clear 清空 ⑤ 源码级：存档 key 独立、props 白名单类型、裁剪逻辑在位
+ * 覆盖：① track 入缓冲与属性保真 ② 环形缓冲 ≤BUF_MAX 且裁掉最旧 ③ 节流落盘（flush 才写）与断电恢复
+ *       ④ clear 清空 ⑤ 源码级：存档 key 独立、props 白名单类型、裁剪逻辑在位、落盘单一入口
  */
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
@@ -50,8 +50,12 @@ check('裁掉最旧：首条为第 50 次上报（wave=50）', Analytics.getRece
 const last = Analytics.getRecent();
 check(`保留最新：末条 wave=${BUF_MAX + 49}`, last[last.length - 1].props.wave === BUF_MAX + 49);
 
-// ── ③ 持久化与断电恢复 ──
-check('localStorage 已写入缓冲 key', store.has('pinballforge_analytics_buf'));
+// ── ③ 节流落盘与断电恢复 ──
+// track 不再逐条同步写 localStorage（小游戏真机上它是同步阻塞 IO，高频撞钉路径会制造掉帧），
+// 改为 FLUSH_MS 尾部合并 + 关键节点显式 flush()。故「track 后立刻读存档应为空」本身就是被校验的契约。
+check('track 后节流窗口内不同步落盘', !store.has('pinballforge_analytics_buf'));
+Analytics.flush();
+check('flush 显式落盘（写入缓冲 key）', store.has('pinballforge_analytics_buf'));
 (Analytics as any)._loaded = false; // 模拟进程重启：复位读档守卫
 (Analytics as any)._buf = [];
 Analytics.getRecent(); // 触发 ensureLoaded 重读
@@ -70,6 +74,9 @@ check('存档 key 独立（不触碰 progress / meta / daily）',
     && !src.includes('pinballforge_daily'));
 check('props 类型白名单（禁嵌套对象）', /Record<string, string \| number \| boolean \| string\[\]>/.test(src));
 check('环形裁剪逻辑在位（splice 到 BUF_MAX）', /splice\(0, this\._buf\.length - BUF_MAX\)/.test(src));
+// 落盘必须只有 flush 一个调用点：若有人把 this.save() 重新塞回 track，高频撞钉路径会退回逐条同步 IO。
+check('落盘单一入口（save 仅被 flush 调用一次）', (src.match(/this\.save\(\)/g) || []).length === 1);
+check('节流窗口常量在位', /export const FLUSH_MS = \d+;/.test(src));
 
 console.log(failed === 0 ? '\n✅ Analytics 埋点壳自检全部通过' : `\n❌ ${failed} 项未通过`);
 // 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）

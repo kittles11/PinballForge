@@ -14,6 +14,13 @@ export type AnalyticsProps = Record<string, string | number | boolean | string[]
 /** 环形缓冲上限：超出裁掉最旧（高频 wave 事件全量保留 200 条足够真机回捞排查） */
 export const BUF_MAX = 200;
 
+/**
+ * 落盘节流窗口（ms）：track 是高频路径（每波 / 每次撞钉结算），原实现每条都同步
+ * JSON.stringify + localStorage.setItem —— 小游戏真机上 localStorage 是同步阻塞 IO，
+ * 会在游戏主循环里制造掉帧。改为尾部合并：最多每 FLUSH_MS 写一次。
+ */
+export const FLUSH_MS = 2000;
+
 /** 埋点缓冲存档键（独立于进度 / meta / 每日任务） */
 const ANALYTICS_BUF_KEY = 'pinballforge_analytics_buf';
 
@@ -70,8 +77,50 @@ class AnalyticsClass {
         }
     }
 
+    /** 待落盘标记：track 只置位，真写由 flush 完成 */
+    private _dirty = false;
+
+    /** 尾部合并定时器（null = 未排队）：窗口内的连续 track 共用一次写入 */
+    private _flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** 上次真正落盘的时刻（ms），用于算本条还需等多久 */
+    private _lastFlush = 0;
+
+    /** 置脏并排队一次尾部合并落盘（已有排队中的定时器则复用，不叠加） */
+    private markDirty(): void {
+        this._dirty = true;
+        if (this._flushTimer !== null) {
+            return;
+        }
+        const wait = Math.max(0, FLUSH_MS - (Date.now() - this._lastFlush));
+        const timer = setTimeout(() => {
+            this._flushTimer = null;
+            this.flush();
+        }, wait);
+        // Node 自检环境下不让未决定时器吊住事件循环（浏览器 / 小游戏返回 number，无 unref）
+        (timer as unknown as { unref?: () => void }).unref?.();
+        this._flushTimer = timer;
+    }
+
     /**
-     * 埋点统一入口：console 即时输出 + 入环形缓冲 + 写存档。
+     * 立即落盘（丢弃节流窗口）：一局结束等「再也不会回来」的关键节点必须显式调用，
+     * 否则末条事件可能在 2s 窗口内随进程被杀而丢失。
+     */
+    flush(): void {
+        if (this._flushTimer !== null) {
+            clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+        }
+        if (!this._dirty) {
+            return;
+        }
+        this._dirty = false;
+        this._lastFlush = Date.now();
+        this.save();
+    }
+
+    /**
+     * 埋点统一入口：console 即时输出 + 入环形缓冲 + 节流落盘。
      * M4 接 SDK 时只改本方法内部，挂钩点签名零改动。
      */
     track(event: string, props: AnalyticsProps = {}): void {
@@ -81,7 +130,7 @@ class AnalyticsClass {
         if (this._buf.length > BUF_MAX) {
             this._buf.splice(0, this._buf.length - BUF_MAX);
         }
-        this.save();
+        this.markDirty();
         console.log(`[Track] ${event}`, entry.props);
     }
 
@@ -94,6 +143,11 @@ class AnalyticsClass {
     /** 调试清空（测试用；线上无调用方） */
     clear(): void {
         this._buf = [];
+        this._dirty = false;
+        if (this._flushTimer !== null) {
+            clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+        }
         try {
             localStorage.removeItem(ANALYTICS_BUF_KEY);
         } catch (e) { /* stub / 隐私模式：忽略 */ }

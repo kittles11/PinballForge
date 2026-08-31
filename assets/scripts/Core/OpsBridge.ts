@@ -1,4 +1,4 @@
-import { _decorator, Component, find } from 'cc';
+import { _decorator, Component, find, game, Game } from 'cc';
 import { EventBus, GameEvents } from './EventBus';
 import type { GameEventMap } from './EventBus';
 import { Analytics } from './Analytics';
@@ -62,11 +62,15 @@ export class OpsBridge extends Component {
         EventBus.on(GameEvents.GAME_VICTORY, this.onGameVictory, this);
         EventBus.on(GameEvents.ENEMY_KILLED, this.onEnemyKilled, this);
         EventBus.on(GameEvents.FIRE_TURRET, this.onFireTurret, this);
+        // 切后台后进程随时可能被系统回收（小游戏尤甚）：立即落盘，避免节流窗口内的末段事件随之丢失。
+        // run_end 只覆盖「正常打完一局」，本钩子兜住中途切走 / 直接杀进程的局。
+        game.on(Game.EVENT_HIDE, Analytics.flush, Analytics);
         console.log('[Ops] 运营埋点桥就绪：附录 A 事件流 + 每日任务进度上报已挂接');
     }
 
     protected onDestroy(): void {
         EventBus.targetOff(this);
+        game.off(Game.EVENT_HIDE, Analytics.flush, Analytics);
     }
 
     /** 波次开始：首次 = run_start（loadFromSave 之后进度才准确），此后逐波 wave_start */
@@ -136,6 +140,8 @@ export class OpsBridge extends Component {
                 shardsEarned: Math.max(0, MetaManager.getShards() - this._shardsAtRunStart),
                 runDurationSec,
             });
+            // run_end 是一局的终点事件、之后可能直接被杀进程：越过 Analytics 的 2s 节流窗口立即落盘
+            Analytics.flush();
         }, 0);
     }
 
