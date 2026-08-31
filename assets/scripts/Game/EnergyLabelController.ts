@@ -32,6 +32,21 @@ export class EnergyLabelController extends Component {
         EventBus.on(GameEvents.UPDATE_ENERGY, this.onUpdateEnergy, this);
     }
 
+    /**
+     * 自举挂载：幂等地把本控制器挂到 Canvas/UILayer/EnergyLabel 节点。
+     * 场景该节点只有序列化的 UITransform + Label（从未挂本组件），导致 UPDATE_ENERGY
+     * 全工程零监听、能量读数从开局永久冻结在编辑器默认文案；由 DeckManager.onLoad 调用。
+     */
+    public static ensureMounted(): void {
+        const labelNode = find('Canvas/UILayer/EnergyLabel');
+        if (!labelNode?.isValid) {
+            return;
+        }
+        if (!labelNode.getComponent(EnergyLabelController)) {
+            labelNode.addComponent(EnergyLabelController);
+        }
+    }
+
     protected start(): void {
         // 主动初始化一次，避免开局停留在编辑器默认文案
         this.onUpdateEnergy(0);

@@ -28,6 +28,13 @@ export class RelicBarController extends Component {
     private _lastTypes: RelicType[] = [];
 
     protected onLoad(): void {
+        // 场景历史遗留：RelicBar 节点上序列化出数十个重复 RelicBarController 实例。
+        // rebuild() 首步是 removeAllChildren()，多实例同时监听 RELIC_CHANGED 会让同一节点被
+        // 反复重建、彼此的瓷片互相抹除（无遗物时更是数十个占位 Label 完全重叠）。仅保留首个。
+        if (this.node.getComponent(RelicBarController) !== this) {
+            this.destroy();
+            return;
+        }
         EventBus.on(GameEvents.RELIC_CHANGED, this.onRelicChanged, this);
     }
 

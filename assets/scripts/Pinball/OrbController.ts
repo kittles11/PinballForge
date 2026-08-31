@@ -625,8 +625,10 @@ export class OrbController extends Component {
      * 由 WaveManager 在广播 SHOW_REWARDS 前调用。
      */
     public static recycleAllOrbs(): void {
-        // 弹珠统一挂在本组件宿主（LauncherController 的父节点）下；用路径兜底兼容场景直放
-        const host = find('Canvas/BattleLayer') ?? find('Canvas');
+        // 弹珠统一挂在发射器宿主的父节点（= Canvas）下：宿主查找必须与 LauncherController
+        // 的 spawn 落点一致。此前误写 'Canvas/BattleLayer'（弹珠不在其下）导致本方法恒空转，
+        // 弹窗背后残球继续撞钉发声；与 PegComponent 全量遍历保持同一 find('Canvas') 约定。
+        const host = find('Canvas');
         const list = host?.getComponentsInChildren(OrbController) ?? [];
         for (const orb of list) {
             if (!orb?.node?.isValid) {

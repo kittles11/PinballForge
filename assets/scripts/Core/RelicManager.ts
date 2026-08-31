@@ -66,10 +66,19 @@ export class RelicManager extends Component {
     /** 场景启动自举是否已注册（只注册一次，避免多个实例重复监听） */
     private static _bootstrapped = false;
 
+    /** 本实例是否为节点上的主实例（非主实例不持有任何全局状态，销毁时不得清理主实例的注册） */
+    private _isPrimary = false;
+
     protected onLoad(): void {
-        if (!RelicManager.instance) {
-            RelicManager.instance = this;
+        // 场景历史遗留：RelicBar 节点上序列化出数十个重复 RelicManager 实例。
+        // 仅节点上的首个实例为主实例；其余立即自我销毁，避免多实例互相抢
+        // instance / _bootstrapped 静态标志（任一非主实例 onDestroy 复位标志会让遗物栏自举失效）。
+        if (this.node.getComponent(RelicManager) !== this) {
+            this.destroy();
+            return;
         }
+        this._isPrimary = true;
+        RelicManager.instance = this;
         if (!RelicManager._bootstrapped) {
             RelicManager._bootstrapped = true;
             // 顶部遗物栏全局自举：每个场景启动后确保 RelicBar 已挂载（新局重载时也会重建）
@@ -78,6 +87,9 @@ export class RelicManager extends Component {
     }
 
     protected onDestroy(): void {
+        if (!this._isPrimary) {
+            return;
+        }
         if (RelicManager.instance === this) {
             RelicManager.instance = null;
         }

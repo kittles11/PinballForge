@@ -7,6 +7,7 @@ import { TutorialManager } from './TutorialManager';
 import { OrbBalance } from './OrbBalance';
 import { OpsBridge } from './OpsBridge';
 import { DailyTaskDialog } from '../UI/DailyTaskDialog';
+import { EnergyLabelController } from '../Game/EnergyLabelController';
 
 const { ccclass, property } = _decorator;
 
@@ -66,6 +67,8 @@ export class DeckManager extends Component {
         OpsBridge.ensureMounted();
         // 📋 每日任务面板 + 徽章自举（面板监听 SHOW_DAILY_TASKS 打开；模块级 bootstrap 兜底场景重载重挂）
         DailyTaskDialog.ensureMounted();
+        // ⚡ 顶部能量 Label 控制器自举（场景 EnergyLabel 节点从未挂本组件 → UPDATE_ENERGY 零监听）
+        EnergyLabelController.ensureMounted();
         // ⚒ meta 永久升级「弹珠打磨」：开局套用伤害加成（OrbBalance.reset() 末尾同样套用，重开一局也覆盖）
         OrbBalance.applyMetaBonus();
     }
