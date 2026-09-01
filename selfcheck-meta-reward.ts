@@ -101,12 +101,13 @@ check('showResult 发放碎片：grantRunReward(章节, 关卡, isWin)',
 check('发放防重标志 _rewardGranted（一次结算只发一次）', /if \(!this\._rewardGranted\)/.test(result));
 check('锻造区幂等创建 ensureForgeSection + 刷新 refreshForge',
     /this\.ensureForgeSection\(\);/.test(result) && /this\.refreshForge\(\);/.test(result));
-check('锻造区五行升级来自 getUpgradeList（整行可点 onForgeRowClick → MetaManager.buy）',
-    /MetaManager\.getUpgradeList\(\)\.map/.test(result)
+check('锻造区十条升级来自 getUpgradeList（整行可点 onForgeRowClick → MetaManager.buy）',
+    /const list = MetaManager\.getUpgradeList\(\);/.test(result)
+    && /\.map\(\(u, i\) =>/.test(result)
     && /private onForgeRowClick\(id: MetaUpgradeId\): void/.test(result)
     && /MetaManager\.buy\(id\)/.test(result));
-check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（8 轨双列 4×4，root y=-46）',
-    /setPosition\(0, -46, 0\)/.test(result));
+check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（10 轨双列自适应，root y=-44）',
+    /setPosition\(0, -44, 0\)/.test(result));
 check('可买金色 / 不可买灰 / 满级暗灰（颜色反馈三态）',
     /FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED/.test(result) && /FORGE_COLOR_MAXED/.test(result));
 
@@ -120,12 +121,13 @@ const goldLabel = strip(read('Game', 'GoldLabelController.ts'));
 const maxHpIdx = castle.indexOf('this.maxHp += MetaManager.getCastleBonus();');
 const hpInitIdx = castle.indexOf('this.currentHp = this.maxHp;');
 check('CastleController.onLoad：maxHp 先套 meta 加成再初始化 currentHp', maxHpIdx >= 0 && hpInitIdx > maxHpIdx);
-check('OrbBalance.applyMetaBonus 赋值式幂等（默认值 + bonus，四球种全覆盖）',
+check('OrbBalance.applyMetaBonus 赋值式幂等（默认值 + bonus，五球种全覆盖）',
     /static applyMetaBonus\(\): void/.test(orbBalance)
     && /this\.normal\.baseDamage = DEFAULT_NORMAL\.baseDamage \+ bonus;/.test(orbBalance)
     && /this\.lightning\.baseDamage = DEFAULT_LIGHTNING\.baseDamage \+ bonus;/.test(orbBalance)
     && /this\.lava\.baseDamage = DEFAULT_LAVA\.baseDamage \+ bonus;/.test(orbBalance)
-    && /this\.frost\.baseDamage = DEFAULT_FROST\.baseDamage \+ bonus;/.test(orbBalance));
+    && /this\.frost\.baseDamage = DEFAULT_FROST\.baseDamage \+ bonus;/.test(orbBalance)
+    && /this\.plasma\.baseDamage = DEFAULT_PLASMA\.baseDamage \+ bonus;/.test(orbBalance));
 const resetBody = (orbBalance.match(/static reset\(\): void \{[\s\S]*?\n    \}/) || [''])[0];
 check('OrbBalance.reset() 末尾套用 meta 加成（重开一局也生效）', resetBody.includes('this.applyMetaBonus();'));
 const deckOnLoad = (deck.match(/protected onLoad\(\): void \{[\s\S]*?\n    \}/) || [''])[0];

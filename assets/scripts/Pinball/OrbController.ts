@@ -144,9 +144,9 @@ export class OrbController extends Component {
         // initOrbType 幂等：发射路径已调用则无副作用；统一无条件补一次，
         // 保证任何来源的球（含场景直放的普通球）都拿到一致的主题样式（白体 / glow / 拖尾）。
         this.initOrbType(this.orbType);
-        if (this.orbType === OrbType.Lava) {
-            // 熔岩重质（密度 ×2 + 重建夹具）延迟一帧执行，绕开物理 step 锁，100% 生效
-            this.scheduleOnce(() => this.applyLavaDensity(), 0);
+        if (this.orbType === OrbType.Lava || this.orbType === OrbType.Plasma) {
+            // 重质球（熔岩 / 等离子）密度重建延迟一帧执行，绕开物理 step 锁，100% 生效
+            this.scheduleOnce(() => this.applyHeavyDensity(), 0);
         }
 
         // 碰撞体可为任意 Collider2D 子类（圆形 / 多边形）
@@ -214,6 +214,20 @@ export class OrbController extends Component {
                 sp.color = Theme.orb.frost; // 极淡冰蓝 #E0F7FA
             }
             this.node.name = 'FrostOrb';
+        } else if (type === OrbType.Plasma) {
+            // 🌳 等离子球：等离紫 + 略重物理（无视护盾的签名机制在 EnemyController.takeDamage 兑现）
+            if (sp) {
+                sp.color = Theme.orb.plasma;
+            }
+            this.node.setScale(new Vec3(OrbBalance.plasma.scale, OrbBalance.plasma.scale, 1));
+            if (rb) {
+                rb.gravityScale = OrbBalance.plasma.gravityScale;
+            }
+            const collider = this.getComponent(Collider2D);
+            if (collider) {
+                collider.density = OrbBalance.plasma.density;
+            }
+            this.node.name = 'PlasmaOrb';
         } else if (type === OrbType.Normal) {
             if (sp) {
                 // ★ 美术修复：普通球本体此前沿用 Prefab 烘焙的 #2DACE7 蓝，
@@ -294,7 +308,7 @@ export class OrbController extends Component {
         if (glowSp?.isValid) {
             glowSp.color = tint;
         }
-        const glowSize = type === OrbType.Lava ? 62 : 52;
+        const glowSize = type === OrbType.Lava ? 62 : type === OrbType.Plasma ? 56 : 52;
         glow.getComponent(UITransform)?.setContentSize(glowSize, glowSize);
         // ② 左上高光点（镜面反射小亮斑）
         let dot = this.node.getChildByName('OrbHighlight');
@@ -332,10 +346,11 @@ export class OrbController extends Component {
     }
 
     /**
-     * 熔岩重质生效：密度 ×2 并重建 Box2D fixture。
+     * 重质球（熔岩 / 等离子）密度生效：按当前球种配置取 density 并重建 Box2D fixture。
      * Box2D 质量 = 密度 × 面积；重建夹具时刚体速度不变 → 同样速度下动量成倍提升，砸击又沉又狠。
+     * 延迟一帧调用（见 start），绕开物理 step 锁，保证 density 改动 100% 生效。
      */
-    private applyLavaDensity(): void {
+    private applyHeavyDensity(): void {
         if (!this.node?.isValid) {
             return;
         }
@@ -343,11 +358,16 @@ export class OrbController extends Component {
         if (!collider) {
             return;
         }
-        collider.density = OrbBalance.lava.density;
+        const cfg = OrbBalance.configFor(this.orbType) as { density?: number };
+        const density = cfg.density;
+        if (typeof density !== 'number') {
+            return;
+        }
+        collider.density = density;
         collider.apply(); // 重新生成 box2d 夹具，让密度（质量）立即生效
         const rb = this.getComponent(RigidBody2D);
         if (rb) {
-            console.log(`[OrbController] ${this.node.name} 重质生效：质量 ≈ ${rb.getMass().toFixed(1)}（1.4 倍缩放 × 2 倍密度）`);
+            console.log(`[OrbController] ${this.node.name} 重质生效：质量 ≈ ${rb.getMass().toFixed(1)}（密度 ×${density}）`);
         }
     }
 

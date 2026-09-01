@@ -44,6 +44,8 @@ export class CastleController extends Component {
         // ⚒ meta 永久升级「城堡加固」：血量上限加成（先于 currentHp 初始化，确保首局即生效）
         this.maxHp += MetaManager.getCastleBonus();
         this.currentHp = this.maxHp;
+        // ⚒ meta 永久升级「战备护盾」：开局要塞护盾（先于 updateDisplay，首帧即显示）
+        this.shield += MetaManager.getStartShieldBonus();
         if (!this.hpLabel) {
             this.hpLabel = find('Canvas/UILayer/CastleHpLabel')?.getComponent(Label) || this.node.getComponentInChildren(Label)!;
         }

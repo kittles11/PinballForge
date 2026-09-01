@@ -28,6 +28,12 @@ export interface FrostConfig extends OrbConfig {
     freezeVulnerability: number;
 }
 
+export interface PlasmaConfig extends OrbConfig {
+    scale: number;
+    gravityScale: number;
+    density: number;
+}
+
 export type OrbUpgradeId =
     | 'lightning_projectile'
     | 'lightning_scatter'
@@ -68,6 +74,17 @@ const DEFAULT_FROST: FrostConfig = {
     freezeVulnerability: 0,
 };
 
+// 🌳 等离子球（Meta 球种工坊解锁）：无视护盾是签名机制（在 EnemyController.takeDamage 兑现）。
+//   代价是伤害吞吐更低：起始 30（< 普通 40）、每钉 +12（< 普通 15）→ 对无盾敌人明显弱于普通球，
+//   对铁甲格挡 / Boss 坚盾则远强（直接透传）。是「针对护盾波次的特化选择」，非全面上位（防严格占优）。
+const DEFAULT_PLASMA: PlasmaConfig = {
+    baseDamage: 30,
+    pegEnergyGain: 12,
+    scale: 1.15,
+    gravityScale: 1.3,
+    density: 1.3,
+};
+
 /**
  * 统一的弹珠配置入口。
  * 当前奖励不要求接入全部升级，但未来可通过 applyUpgrade() 跨波次修改这些运行时值。
@@ -77,6 +94,7 @@ export class OrbBalance {
     static readonly lightning: LightningConfig = { ...DEFAULT_LIGHTNING };
     static readonly lava: LavaConfig = { ...DEFAULT_LAVA };
     static readonly frost: FrostConfig = { ...DEFAULT_FROST };
+    static readonly plasma: PlasmaConfig = { ...DEFAULT_PLASMA };
 
     /** Normal 的轻量连续撞击奖励；保持其基础定位，不与特殊球争夺强度。 */
     static readonly normalComboThreshold = 5;
@@ -106,6 +124,7 @@ export class OrbBalance {
                 this.normal.baseDamage += value;
                 this.lightning.baseDamage += value;
                 this.lava.baseDamage += value;
+                this.plasma.baseDamage += value;
                 break;
             case 'peg_multiplier':
                 this.pegMultiplier += value;
@@ -126,7 +145,7 @@ export class OrbBalance {
 
     /**
      * 永久升级（meta「弹珠打磨」）伤害加成：赋值式（默认值 + 加成，幂等可重复调用），
-     * 四种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
+     * 五种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
      * 调用时机：DeckManager.onLoad（场景首局）与 reset() 末尾（重开一局），两处都套保证任何起点都生效。
      */
     static applyMetaBonus(): void {
@@ -135,6 +154,7 @@ export class OrbBalance {
         this.lightning.baseDamage = DEFAULT_LIGHTNING.baseDamage + bonus;
         this.lava.baseDamage = DEFAULT_LAVA.baseDamage + bonus;
         this.frost.baseDamage = DEFAULT_FROST.baseDamage + bonus;
+        this.plasma.baseDamage = DEFAULT_PLASMA.baseDamage + bonus;
     }
 
     /**
@@ -157,6 +177,7 @@ export class OrbBalance {
         Object.assign(this.lightning, DEFAULT_LIGHTNING);
         Object.assign(this.lava, DEFAULT_LAVA);
         Object.assign(this.frost, DEFAULT_FROST);
+        Object.assign(this.plasma, DEFAULT_PLASMA);
         this.pegMultiplier = 1;
         this.funnelBonus = 0;
         this.lavaAreaSplashEnabled = false;
@@ -174,6 +195,9 @@ export class OrbBalance {
         }
         if (type === OrbType.Frost) {
             return this.frost;
+        }
+        if (type === OrbType.Plasma) {
+            return this.plasma;
         }
         return this.normal;
     }

@@ -67,7 +67,7 @@ check('masterDeck 为 public（背包面板统计各球种数量）', /public\s+
 // 公式：单遍计数 → 按 ORB_DISPLAY 固定顺序过滤 count>0 → 「icon name × count」以 \n 连接
 const orbDisplay = [...dialogSrc.matchAll(/\{\s*type:\s*OrbType\.(\w+),\s*icon:\s*'([^']+)',\s*name:\s*'([^']+)'\s*\}/g)]
     .map((m) => ({ key: m[1], icon: m[2], name: m[3] }));
-check('ORB_DISPLAY 覆盖 4 种球种（普通/闪电/熔岩/冰霜）', orbDisplay.length === 4);
+check('ORB_DISPLAY 覆盖 5 种球种（普通/闪电/熔岩/冰霜/等离子）', orbDisplay.length === 5);
 const countDeck = (deck: number[]): string => {
     const counts = new Map<number, number>();
     for (const t of deck) {
@@ -83,6 +83,7 @@ check('初始卡组 3普通+1雷+1熔岩+1冰 → 4 行计数', countDeck([0, 0,
 check('计数正确聚合（0×3 → ⚪ 普通弹珠 × 3）', countDeck([0, 0, 0, 1, 2, 3]).includes('⚪ 普通弹珠 × 3'));
 check('数量为 0 的球种不显示', !countDeck([1, 1]).includes('普通弹珠'));
 check('删卡后数量同步减少（1雷 → ⚡ 裂变雷球 × 1）', countDeck([0, 1, 2, 3]).includes('⚡ 裂变雷球 × 1'));
+check('Meta 解锁的等离子球（type 4）在背包正确计数显示', countDeck([0, 0, 4]).includes('🟣 等离子球 × 1'));
 
 console.log(failed === 0 ? '\n✅ 全部自检通过' : `\n❌ ${failed} 项自检失败`);
 process.exit(failed === 0 ? 0 : 1);

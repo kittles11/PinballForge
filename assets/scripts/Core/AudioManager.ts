@@ -363,6 +363,10 @@ export class AudioManager {
             // 熔岩：三角波低坠轰鸣 + 更低的 sine 打底，制造沉重感
             AudioManager.playTone('triangle', 130, 0.5, 0.45, { endFreq: 45 });
             AudioManager.playTone('sine', 65, 0.55, 0.38, { endFreq: 30 });
+        } else if (type === OrbType.Plasma) {
+            // 等离子：上扬能量嗡鸣（sine 上扫 + 高次泛音，区别于其它球种）
+            AudioManager.playTone('sine', 300, 0.4, 0.2, { endFreq: 1200 });
+            AudioManager.playTone('sine', 600, 0.3, 0.1, { endFreq: 2400, delay: 0.03 });
         } else {
             // 普通：轻量弹射叮声（复用直播池降级合成音，音色与撞钉一致）
             AudioManager.playSynthDing(1);

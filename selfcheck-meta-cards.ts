@@ -6,8 +6,10 @@
  *   ① 应答卡数据：破盾者/清剿令/猎首契约 三张（id/actionType/value）
  *   ② EnemyController 静态倍率 + resetStaticData 全覆盖 + takeDamage 三处挂钩
  *   ③ RewardDialog applyReward 三个新 case + 洞察地板接线
- *   ④ Meta 解锁树：META_PREREQS 门控、isUnlocked、buy 拒绝未解锁、getUpgradeList 五条带 prereq
+ *   ④ Meta 解锁树：META_PREREQS 门控、isUnlocked、buy 拒绝未解锁、getUpgradeList 十条带 prereq/describe
  *   ⑤ 碎片加成进 grantRunReward；enforceRarityFloor 纯函数真跑（达标/替换/优雅退化）
+ *   ⑥ 新轨接线（扩容/实验台/战备护盾）+ 跨局解锁卡数据（禁忌×2 + 等离子球）
+ *   ⑦ 第 5 球种「等离子球」全分支接线安全网（OrbBalance/ArtTheme/OrbController/takeDamage/DeckManager）
  */
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
@@ -19,7 +21,7 @@ const store = new Map<string, string>();
     setItem: (k: string, v: string): void => { store.set(k, String(v)); },
     removeItem: (k: string): void => { store.delete(k); },
 };
-const { CARD_DATABASE, FORBIDDEN_CARDS, enforceRarityFloor } = await import('./assets/scripts/Core/DataModels.ts');
+const { CARD_DATABASE, META_UNLOCKED_CARDS, enforceRarityFloor } = await import('./assets/scripts/Core/DataModels.ts');
 const { MetaManager, META_PREREQS } = await import('./assets/scripts/Core/MetaManager.ts');
 
 const ROOT = resolve(process.cwd());
@@ -71,23 +73,29 @@ check('洞察地板接线：Lv1+ 稀有地板、Lv3+ 追加史诗地板（enforc
     && /insight >= 1[\s\S]{0,80}enforceRarityFloor\(this\._currentRewards, pool, '稀有'\)/.test(reward)
     && /insight >= 3[\s\S]{0,80}enforceRarityFloor\(this\._currentRewards, pool, '史诗'\)/.test(reward));
 
-// ── ④ Meta 解锁树（行为真跑）：8 轨三条深度链 ──
+// ── ④ Meta 解锁树（行为真跑）：10 轨三条根深度链 ──
 const LV = (o: Partial<Record<string, number>>): any =>
-    ({ castle: 0, orbCap: 0, boardLab: 0, damage: 0, gold: 0, shard: 0, insight: 0, forbiddenPack: 0, ...o });
-check('META_PREREQS 树形：三根轨 null + orbCap←castle3 / boardLab←orbCap2 / shard←gold3 / insight←damage3 / forbiddenPack←insight2',
+    ({ castle: 0, orbCap: 0, boardLab: 0, startShield: 0, damage: 0, gold: 0, shard: 0, insight: 0, orbLab: 0, forbiddenPack: 0, ...o });
+check('META_PREREQS 树形：三根轨 null + orbCap←castle3 / boardLab←orbCap2 / startShield←castle2 / shard←gold3 / insight←damage3 / orbLab←damage2 / forbiddenPack←insight2',
     META_PREREQS.castle === null && META_PREREQS.damage === null && META_PREREQS.gold === null
     && META_PREREQS.orbCap.id === 'castle' && META_PREREQS.orbCap.lv === 3
     && META_PREREQS.boardLab.id === 'orbCap' && META_PREREQS.boardLab.lv === 2
+    && META_PREREQS.startShield.id === 'castle' && META_PREREQS.startShield.lv === 2
     && META_PREREQS.shard.id === 'gold' && META_PREREQS.shard.lv === 3
     && META_PREREQS.insight.id === 'damage' && META_PREREQS.insight.lv === 3
+    && META_PREREQS.orbLab.id === 'damage' && META_PREREQS.orbLab.lv === 2
     && META_PREREQS.forbiddenPack.id === 'insight' && META_PREREQS.forbiddenPack.lv === 2);
 MetaManager.levels = LV({});
 MetaManager.shards = 99999;
-check('深度链初始全锁：castle/damage/gold Lv0 时五条子轨全未解锁',
-    !MetaManager.isUnlocked('orbCap') && !MetaManager.isUnlocked('boardLab')
-    && !MetaManager.isUnlocked('shard') && !MetaManager.isUnlocked('insight') && !MetaManager.isUnlocked('forbiddenPack'));
+check('深度链初始全锁：castle/damage/gold Lv0 时七条子轨全未解锁',
+    !MetaManager.isUnlocked('orbCap') && !MetaManager.isUnlocked('boardLab') && !MetaManager.isUnlocked('startShield')
+    && !MetaManager.isUnlocked('shard') && !MetaManager.isUnlocked('insight') && !MetaManager.isUnlocked('orbLab') && !MetaManager.isUnlocked('forbiddenPack'));
 check('未解锁拒绝购买（碎片充足也买不了 orbCap）', !MetaManager.buy('orbCap') && MetaManager.getLv('orbCap') === 0);
-// castle Lv3 → orbCap 解锁；orbCap Lv2 → boardLab 解锁（三级链 castle→orbCap→boardLab）
+// castle Lv2 → startShield；castle Lv3 → orbCap；orbCap Lv2 → boardLab（castle 双分支）
+MetaManager.levels = LV({ castle: 2 });
+check('castle Lv2 → startShield 解锁可买（战备护盾）',
+    MetaManager.isUnlocked('startShield') && MetaManager.buy('startShield') && MetaManager.getLv('startShield') === 1);
+check('castle Lv2 < 3 → orbCap 仍锁（同父不同档）', !MetaManager.isUnlocked('orbCap'));
 MetaManager.levels = LV({ castle: 3 });
 check('一级解锁：castle Lv3 → orbCap 解锁可买',
     MetaManager.isUnlocked('orbCap') && MetaManager.buy('orbCap') && MetaManager.getLv('orbCap') === 1);
@@ -95,29 +103,36 @@ check('二级链未通：orbCap Lv1 < 2 → boardLab 仍锁', !MetaManager.isUnl
 MetaManager.levels = LV({ castle: 3, orbCap: 2 });
 check('二级解锁：orbCap Lv2 → boardLab 解锁可买',
     MetaManager.isUnlocked('boardLab') && MetaManager.buy('boardLab') && MetaManager.getLv('boardLab') === 1);
-// damage→insight→forbiddenPack 三级链
+// damage Lv2 → orbLab（球种工坊）；damage Lv3 → insight → forbiddenPack（damage 双分支）
+MetaManager.levels = LV({ damage: 2 });
+check('damage Lv2 → orbLab 解锁可买（球种工坊）',
+    MetaManager.isUnlocked('orbLab') && MetaManager.buy('orbLab') && MetaManager.getLv('orbLab') === 1);
+check('damage Lv2 < 3 → insight 仍锁（同父不同档）', !MetaManager.isUnlocked('insight'));
 MetaManager.levels = LV({ damage: 3, insight: 2 });
 check('三级链：damage Lv3+insight Lv2 → forbiddenPack 解锁可买',
     MetaManager.isUnlocked('forbiddenPack') && MetaManager.buy('forbiddenPack') && MetaManager.getLv('forbiddenPack') === 1);
 check('canAfford 对未解锁子轨恒 false（shard 父轨 gold 未达标）',
     MetaManager.canAfford('shard') === false);
-check('getUpgradeList 返回八条且带 prereq/describe（三条 describe 子轨齐全）',
+check('getUpgradeList 返回十条且带 prereq/describe（四条 describe 子轨齐全）',
     (() => {
         const list = MetaManager.getUpgradeList();
         const byId = (id: string) => list.find((u: any) => u.id === id);
-        return list.length === 8
+        return list.length === 10
             && byId('castle').prereq === null
             && byId('orbCap').prereq !== null && byId('boardLab').prereq !== null && byId('forbiddenPack').prereq !== null
             && typeof byId('insight').describe === 'function'
             && typeof byId('boardLab').describe === 'function'
+            && typeof byId('orbLab').describe === 'function'
             && typeof byId('forbiddenPack').describe === 'function';
     })());
-check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；forbiddenPack Lv1→聚能奇点 / Lv3→奇点+猎神',
+check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；orbLab Lv1→等离子球；forbiddenPack Lv1→奇点 / Lv3→奇点+猎神',
     (() => {
         const list = MetaManager.getUpgradeList();
         const bl = list.find((u: any) => u.id === 'boardLab').describe;
+        const ol = list.find((u: any) => u.id === 'orbLab').describe;
         const fp = list.find((u: any) => u.id === 'forbiddenPack').describe;
         return bl(1).includes('版型D') && !bl(1).includes('E') && bl(3).includes('D+E')
+            && ol(0).includes('未解锁') && ol(1).includes('等离子球')
             && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神');
     })());
 
@@ -174,19 +189,57 @@ check('getOrbCapBonus 行为：orbCap Lv3 → +3',
     (() => { MetaManager.levels = LV({ orbCap: 3 }); return MetaManager.getOrbCapBonus() === 3; })());
 check('钉板实验台接线：PegBoardManager 经 activePegLayouts 消费 getBoardLabLv',
     /getBoardLabLv\(\)/.test(board) && /activePegLayouts\(\)/.test(board));
-check('禁忌卡包数据：2 张跨局专属卡，metaLock 指向 forbiddenPack Lv1/Lv3，复用既有 actionType',
-    FORBIDDEN_CARDS.length === 2
-    && FORBIDDEN_CARDS.every((c: any) => c.metaLock && c.metaLock.track === 'forbiddenPack')
-    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.lv === 1
-    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_singularity').actionType === 'BuffHeavy'
-    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_godslayer').metaLock.lv === 3
-    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_godslayer').actionType === 'AntiElite');
-check('禁忌卡默认不在 CARD_DATABASE（常规局抽不到，仅经 forbiddenPack 解锁并入池）',
-    !CARD_DATABASE.some((c: any) => c.id === 'forb_singularity' || c.id === 'forb_godslayer'));
-check('RewardDialog 按 metaLock 档位过滤并入禁忌卡（getLv(track) >= lv）',
-    /FORBIDDEN_CARDS/.test(reward)
+check('战备护盾接线：CastleController.onLoad 套 getStartShieldBonus 到 shield',
+    /this\.shield \+= MetaManager\.getStartShieldBonus\(\)/.test(read('Battle', 'CastleController.ts')));
+check('getStartShieldBonus 行为：startShield Lv3 → +45',
+    (() => { MetaManager.levels = LV({ startShield: 3 }); return MetaManager.getStartShieldBonus() === 45; })());
+check('跨局解锁卡数据：3 张专属卡（禁忌×2 + 等离子球×1），metaLock 各指自己子轨，复用既有 actionType',
+    META_UNLOCKED_CARDS.length === 3
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.track === 'forbiddenPack'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.lv === 1
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').actionType === 'BuffHeavy'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_godslayer').metaLock.lv === 3
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_godslayer').actionType === 'AntiElite'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').metaLock.track === 'orbLab'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').metaLock.lv === 1
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').actionType === 'AddOrb'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').orbType === 4);
+check('跨局卡默认不在 CARD_DATABASE（常规局抽不到，仅经对应子轨解锁并入池）',
+    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'orb_plasma'].includes(c.id)));
+check('RewardDialog 按 metaLock 档位过滤并入跨局卡（getLv(track) >= lv）',
+    /META_UNLOCKED_CARDS/.test(reward)
     && /!c\.metaLock \|\| MetaManager\.getLv\(c\.metaLock\.track as MetaUpgradeId\) >= c\.metaLock\.lv/.test(reward)
-    && /\[\.\.\.REWARD_CARD_POOL, \.\.\.forbiddenUnlocked\]/.test(reward));
+    && /\[\.\.\.REWARD_CARD_POOL, \.\.\.unlockedSpecials\]/.test(reward));
+
+// ── ⑦ 第 5 球种「等离子球」全分支接线安全网（新球种最易漏挂分支 → 逐项锁死） ──
+const { OrbType, OrbBalance: OB } = await import('./assets/scripts/Core/OrbBalance.ts');
+const { OrbType: OT } = await import('./assets/scripts/Core/DataModels.ts');
+const artTheme = strip(read('Core', 'ArtTheme.ts'));
+const orbCtrl = strip(read('Pinball', 'OrbController.ts'));
+const deckMgr = strip(read('Core', 'DeckManager.ts'));
+check('OrbType.Plasma = 4（枚举新增值，不与既有 0-3 冲突）', OT.Plasma === 4);
+check('OrbBalance.configFor(Plasma) 行为真跑：返回 plasma 配置 baseDamage=30 pegEnergyGain=12',
+    (() => {
+        const cfg = OB.configFor(OT.Plasma);
+        return cfg === OB.plasma && cfg.baseDamage === 30 && cfg.pegEnergyGain === 12;
+    })());
+check('等离子球权衡成立：伤害吞吐低于普通球（防"无视护盾"变严格占优）',
+    OB.plasma.baseDamage < OB.normal.baseDamage && OB.plasma.pegEnergyGain < OB.normal.pegEnergyGain);
+check('OrbBalance 全覆盖：applyMetaBonus 与 reset 均含 plasma（漏一处即伤害/重开不生效）',
+    /this\.plasma\.baseDamage = DEFAULT_PLASMA\.baseDamage \+ bonus/.test(OB_src())
+    && /Object\.assign\(this\.plasma, DEFAULT_PLASMA\)/.test(OB_src()));
+function OB_src(): string { return strip(read('Core', 'OrbBalance.ts')); }
+check('ArtTheme 配色全覆盖：Theme.orb.plasma + 拖尾[4] + 瞄准[4]（漏拖尾/瞄准即回退银白）',
+    /plasma: hex\(C_PLASMA\)/.test(artTheme)
+    && /4: hex\(C_PLASMA\)/.test(artTheme)
+    && /4: hex\(C_PLASMA, 240\)/.test(artTheme));
+check('OrbController.initOrbType 有 Plasma 分支（赋 Theme.orb.plasma + 略重物理 + 命名 PlasmaOrb）',
+    /type === OrbType\.Plasma/.test(orbCtrl) && /Theme\.orb\.plasma/.test(orbCtrl));
+check('EnemyController.takeDamage：铁甲格挡与 Boss 坚盾两处均放行 Plasma（无视护盾签名机制）',
+    /this\.shieldCharges > 0 && orbType !== OrbType\.Plasma/.test(enemy)
+    && /this\._bulwarkLayers > 0 && !rawFloor && orbType !== OrbType\.Plasma/.test(enemy));
+check('DeckManager.ORB_TYPE_NAMES 补第 5 名（漏则选卡/日志显示 undefined）',
+    /'等离子球'/.test(deckMgr));
 
 console.log(failed === 0 ? '\n✅ 应答卡 + Meta 解锁树自检全部通过' : `\n❌ ${failed} 项未通过`);
 if (failed > 0) process.exit(1);

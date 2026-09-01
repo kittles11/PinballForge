@@ -172,6 +172,9 @@ export class TurretController extends Component {
         } else if (orbType === OrbType.Lava) {
             color = Theme.orb.lava; // #FF4400 熔岩火红大弹
             radius = 16;
+        } else if (orbType === OrbType.Plasma) {
+            color = Theme.orb.plasma; // 等离紫弹
+            radius = 13;
         } else {
             color = Theme.orb.normal; // #FFFFFF 普通银白
             radius = 10;

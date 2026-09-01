@@ -130,19 +130,22 @@ export class ResultDialog extends Component {
         const root = new Node('ForgeSection');
         root.addComponent(UITransform).setContentSize(520, 150);
         // 摆位（面板居中锚点）：落在 descLabel(y=40) 与 RestartButton(y=-140) 之间的 180px 带内。
-        // 解锁树扩到 8 条 → 双列 4×4（每列 4 行 @30px=120px + 顶部碎片行），单列放不下故分列。
-        root.setPosition(0, -46, 0);
+        // 解锁树 10 条 → 双列自适应（每列 ceil(n/2) 行）；行距按列行数动态收放保证不压按钮。
+        root.setPosition(0, -44, 0);
         this.node.addChild(root);
         this._forgeRoot = root;
 
         // 顶部：碎片余额（整行居中）
-        this._shardsLabel = this.makeForgeRow(root, 0, 44, 18, FORGE_COLOR_SHARDS, 520);
-        // 八条升级：前 4 条左列、后 4 条右列（与 getUpgradeList 树分支序一致），整行可点购买
-        this._rowLabels = MetaManager.getUpgradeList().map((u, i) => {
-            const col = i < 4 ? 0 : 1;
-            const row = i % 4;
+        this._shardsLabel = this.makeForgeRow(root, 0, 42, 17, FORGE_COLOR_SHARDS, 520);
+        // 十条升级：双列（前 ceil 半左列、余右列，与 getUpgradeList 树分支序一致），整行可点购买
+        const list = MetaManager.getUpgradeList();
+        const perCol = Math.ceil(list.length / 2);
+        const spacing = perCol <= 4 ? 28 : 25;
+        this._rowLabels = list.map((u, i) => {
+            const col = i < perCol ? 0 : 1;
+            const row = col === 0 ? i : i - perCol;
             const x = col === 0 ? -128 : 128;
-            const y = 14 - row * 30;
+            const y = 14 - row * spacing;
             const label = this.makeForgeRow(root, x, y, 13, Color.WHITE.clone(), 248);
             label.node.on(Node.EventType.TOUCH_END, () => this.onForgeRowClick(u.id), this);
             return label;

@@ -8,7 +8,7 @@ import { PegComponent } from '../Pinball/PegComponent';
 import { DeckManager } from '../Core/DeckManager';
 import { OrbController } from '../Pinball/OrbController';
 import { OrbBalance } from '../Core/OrbBalance';
-import { CardData, CARD_DATABASE, FORBIDDEN_CARDS, drawWeightedCards, enforceRarityFloor, OrbType, RelicType } from '../Core/DataModels';
+import { CardData, CARD_DATABASE, META_UNLOCKED_CARDS, drawWeightedCards, enforceRarityFloor, OrbType, RelicType } from '../Core/DataModels';
 import { MetaManager } from '../Core/MetaManager';
 import type { MetaUpgradeId } from '../Core/MetaManager';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
@@ -128,14 +128,14 @@ export class RewardDialog extends Component {
         // ★ 卡库按稀有度加权抽三（100/40/15）：史诗球卡低频、普通救急卡高频；
         //   无放回不重复；牌库满时池已滤掉 AddOrb（史诗层为空自动退化）
         const canAddOrb = DeckManager.instance?.canAddOrb() ?? true;
-        // 🌳 Meta「禁忌卡包」：把 forbiddenPack 已解锁档位的跨局专属卡并入池（未解锁档位不入池 → 常规局抽不到）
-        const forbiddenUnlocked: RewardCard[] = FORBIDDEN_CARDS
+        // 🌳 Meta 跨局解锁卡：把 metaLock 子轨已达档位的专属卡并入池（未解锁档位不入池 → 常规局抽不到）
+        const unlockedSpecials: RewardCard[] = META_UNLOCKED_CARDS
             .filter((c) => !c.metaLock || MetaManager.getLv(c.metaLock.track as MetaUpgradeId) >= c.metaLock.lv)
             .map((c) => ({
                 id: c.id, title: c.title, desc: c.desc, archetype: c.archetype,
                 rarity: c.rarity, actionType: c.actionType, orbType: c.orbType, value: c.value,
             }));
-        const pool = [...REWARD_CARD_POOL, ...forbiddenUnlocked].filter((card) => canAddOrb || card.actionType !== 'AddOrb');
+        const pool = [...REWARD_CARD_POOL, ...unlockedSpecials].filter((card) => canAddOrb || card.actionType !== 'AddOrb');
         this._currentRewards = drawWeightedCards(pool, REWARD_CHOICE_COUNT);
         // ⚒ Meta「战术洞察」（解锁树子轨）稀有度地板：Lv1+ 保证至少 1 张稀有、Lv3+ 追加至少 1 张史诗
         //   （池内无达标卡自动原样返回——如牌库满滤掉 AddOrb 后史诗层变薄的情形）

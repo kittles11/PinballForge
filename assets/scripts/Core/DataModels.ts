@@ -43,6 +43,8 @@ export enum OrbType {
     Lava = 2,
     /** 霜冻冰球：入任意槽冰封全场敌人 4 秒，命中单体冻结 3 秒 */
     Frost = 3,
+    /** 🌳 等离子球（Meta「球种工坊」跨局解锁）：略重高能球，无视铁甲格挡与 Boss 坚盾；基础伤害偏低作为权衡 */
+    Plasma = 4,
 }
 
 /** 钉子类型 */
@@ -528,11 +530,11 @@ export const CARD_DATABASE: CardData[] = [
 ];
 
 /**
- * 🌳 Meta「禁忌卡包」跨局专属卡：默认【不】进抽卡池，仅当 forbiddenPack 子轨达到对应档位后，
- * 由 RewardDialog 并入卡池。均为既有 actionType 的封顶强化版（复用现有结算钩子，零新机制），
- * 以「跨局解锁的稀有强力选项」承载长线目标感。
+ * 🌳 Meta 跨局解锁卡：默认【不】进抽卡池，仅当 metaLock 指向的子轨达到档位后，
+ * 由 RewardDialog 并入卡池。承载「跨局解锁新内容」的目标感——禁忌卡包（forbiddenPack）与
+ * 球种工坊（orbLab）各挂自己的专属卡。均复用既有 actionType（零新结算钩子）。
  */
-export const FORBIDDEN_CARDS: CardData[] = [
+export const META_UNLOCKED_CARDS: CardData[] = [
     {
         id: 'forb_singularity', title: '聚能奇点', archetype: CardArchetype.Lava, rarity: '史诗',
         desc: '【禁忌·跨局解锁】聚能漏斗（红）伤害倍率额外 +120%——熔岩流的封顶之作。',
@@ -542,6 +544,11 @@ export const FORBIDDEN_CARDS: CardData[] = [
         id: 'forb_godslayer', title: '猎神契约', archetype: CardArchetype.Universal, rarity: '史诗',
         desc: '【禁忌·跨局解锁】对精英（带词缀）与章节 Boss 的伤害提升 100%。',
         actionType: 'AntiElite', value: 1.0, metaLock: { track: 'forbiddenPack', lv: 3 },
+    },
+    {
+        id: 'orb_plasma', title: '等离子球', archetype: CardArchetype.Universal, rarity: '史诗',
+        desc: '【工坊·跨局解锁】获得 1 颗【等离子球】：略重高能，无视铁甲格挡与 Boss 坚盾（基础伤害偏低）。',
+        actionType: 'AddOrb', orbType: OrbType.Plasma, metaLock: { track: 'orbLab', lv: 1 },
     },
 ];
 

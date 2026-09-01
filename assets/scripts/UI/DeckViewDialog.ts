@@ -33,6 +33,7 @@ const ORB_DISPLAY: { type: OrbType; icon: string; name: string }[] = [
     { type: OrbType.Lightning, icon: '⚡', name: '裂变雷球' },
     { type: OrbType.Lava, icon: '🌋', name: '重力熔岩球' },
     { type: OrbType.Frost, icon: '❄️', name: '霜冻冰球' },
+    { type: OrbType.Plasma, icon: '🟣', name: '等离子球' },
 ];
 
 /**

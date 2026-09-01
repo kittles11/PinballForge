@@ -395,7 +395,8 @@ export class EnemyController extends Component {
 
         // 🛡️ 铁甲怪护盾：有剩余层数时免疫本次伤害（各珠子类型炮弹与跳过保底的固定伤害一并挡下），
         //   每挡一次消耗 1 层。注意：霜冻冰球的全场冰封走 freeze() 不经伤害结算，不受护盾阻挡。
-        if (this.shieldCharges > 0) {
+        //   🌳 等离子球签名机制：无视铁甲格挡（直接透传全额伤害，不消耗盾层——护盾仍挡其它球）。
+        if (this.shieldCharges > 0 && orbType !== OrbType.Plasma) {
             // 🃏 破盾者：每次命中额外剥离 shieldbreakerStrips 层（对铁甲格挡层生效）
             this.shieldCharges -= 1 + EnemyController.shieldbreakerStrips;
             this.redrawShieldPips(Math.max(0, this.shieldCharges));
@@ -415,7 +416,8 @@ export class EnemyController extends Component {
         let dmg = baseDmg;
         // 👹 A 破阵坚盾：盾期炮弹伤害 ×0.5（软减伤非免疫）；重炮（红槽）弹剥 1 层、熔岩弹剥 2 层——
         //   漏斗选择与熔岩构筑在这里获得真实应答。荆棘等直伤（rawFloor）不吃盾也不剥盾。
-        if (this._bulwarkLayers > 0 && !rawFloor) {
+        //   🌳 等离子球无视坚盾减伤（不吃 ×0.5，也不剥层）。
+        if (this._bulwarkLayers > 0 && !rawFloor && orbType !== OrbType.Plasma) {
             let peeled = 0;
             if (funnelType === FunnelType.HeavyCannon) {
                 peeled += BOSS_BEHAVIOR_STATS.bulwarkPeelHeavy;
@@ -489,6 +491,10 @@ export class EnemyController extends Component {
             case OrbType.Lava:
                 // 熔岩重弹：身体闪大红光（💥 暴击跳字）
                 this.flashHit(HEAVY_HIT_COLOR);
+                break;
+            case OrbType.Plasma:
+                // 🌳 等离子球：身体闪等离紫光（无视护盾的透传命中反馈）
+                this.flashHit(Theme.orb.plasma);
                 break;
             default:
                 // 普通 / 金币弹：标准白闪（金币已改为入槽即发，见 OrbController.triggerFunnelAndDestroy，此处不再发放防重复）
