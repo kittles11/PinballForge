@@ -12,38 +12,52 @@ import { Analytics } from './Analytics';
 /** 永久进度存档键（独立于 pinballforge_progress，防 resetProgress 误清） */
 const META_SAVE_KEY = 'pinballforge_meta';
 
-/** 永久升级 id：三条根轨（castle/damage/gold）+ 两条前置解锁子轨（shard/insight，见 META_PREREQS） */
-export type MetaUpgradeId = 'castle' | 'damage' | 'gold' | 'shard' | 'insight';
+/** 永久升级 id：三条根轨（castle/damage/gold）+ 五条前置解锁子轨（见 META_PREREQS 树形） */
+export type MetaUpgradeId =
+    | 'castle' | 'damage' | 'gold'
+    | 'orbCap' | 'boardLab' | 'shard' | 'insight' | 'forbiddenPack';
 
 /** 每级加成数值（单一真源：加成计算与 UI 文案都从这里取） */
 export const META_UPGRADE_PER_LV: Record<MetaUpgradeId, number> = {
     castle: 10,  // 城堡血量上限 +10/级
     damage: 2,   // 全弹珠伤害 +2/级
     gold: 25,    // 开局金币 +25/级
+    orbCap: 1,   // 牌库容量上限 +1/级（8 → 最多 13）
+    boardLab: 1, // 钉板实验台：解锁档位（Lv1 版型D / Lv3 版型E，非线性，展示走 describe）
     shard: 15,   // 结算碎片获取 +15%/级
     insight: 1,  // 选牌保底档位（Lv1 稀有地板 / Lv3 史诗地板，非线性数值，展示走 describe）
+    forbiddenPack: 1, // 禁忌卡包：解锁档位（Lv1 聚能奇点 / Lv3 猎神契约，非线性，展示走 describe）
 };
 
 /** 各升级首级价格：第 n 级价格 = 首价 × n（线性阶梯递增，买满一级比一级贵） */
 const META_UPGRADE_BASE_PRICE: Record<MetaUpgradeId, number> = {
-    castle: 20, // 5 级共 300
-    damage: 25, // 5 级共 375
-    gold: 15,   // 5 级共 225
-    shard: 30,  // 5 级共 450（经济复利轨，中后期回本）
-    insight: 60 // 5 级共 900（终局投资轨：构筑质量上限）
+    castle: 20,  // 5 级共 300
+    damage: 25,  // 5 级共 375
+    gold: 15,    // 5 级共 225
+    orbCap: 35,  // 5 级共 525（构筑宽度：牌库扩容）
+    boardLab: 50, // 5 级共 750（内容解锁：新钉板版型）
+    shard: 30,   // 5 级共 450（经济复利轨，中后期回本）
+    insight: 60, // 5 级共 900（终局投资轨：构筑质量上限）
+    forbiddenPack: 80, // 5 级共 1200（顶级内容解锁：跨局专属强力卡）
 };
 
 /**
  * 🌳 解锁树前置门控：子轨需父轨达到指定等级才开放购买（null = 根轨恒可用）。
- * 树形：gold ─→ shard（经济复利）；damage ─→ insight（构筑质量）。
- * 设计意图：给长线玩家清晰的加点路线感，而非三条平行无差别轨道。
+ * 树形（三条深度链）：
+ *   castle ─→ orbCap ─→ boardLab（结构→容量→钉板实验台）
+ *   gold ───→ shard（经济复利）
+ *   damage ─→ insight ─→ forbiddenPack（伤害→构筑质量→禁忌卡包）
+ * 设计意图：给长线玩家清晰的加点路线感与「解锁新内容」的目标感，而非平行无差别轨道。
  */
 export const META_PREREQS: Record<MetaUpgradeId, { id: MetaUpgradeId; lv: number } | null> = {
     castle: null,
     damage: null,
     gold: null,
+    orbCap: { id: 'castle', lv: 3 },
+    boardLab: { id: 'orbCap', lv: 2 },
     shard: { id: 'gold', lv: 3 },
     insight: { id: 'damage', lv: 3 },
+    forbiddenPack: { id: 'insight', lv: 2 },
 };
 
 /** 碎片发放公式常量：15 + (章-1)×6 + (关-1)×2，胜利 ×3（自检锚点复核用） */
@@ -58,9 +72,9 @@ export const META_MAX_LV = 5;
 /** 升级展示信息（ResultDialog 锻造区遍历用） */
 export interface MetaUpgradeInfo {
     id: MetaUpgradeId;
-    /** 升级名（城堡加固 / 弹珠打磨 / 开局资金 / 碎片收藏 / 战术洞察） */
+    /** 升级名（城堡加固 / 弹珠槽扩容 / 钉板实验台 / 弹珠打磨 / 开局资金 / 碎片收藏 / 战术洞察 / 禁忌卡包） */
     name: string;
-    /** 加成项单位名（城堡血量 / 弹珠伤害 / 开局金币 / 碎片获取% / 选牌保底） */
+    /** 加成项单位名（城堡血量 / 牌库容量 / 钉板版型 / 弹珠伤害 / 开局金币 / 碎片获取% / 选牌保底 / 禁忌卡牌） */
     unit: string;
     /** 每级加成数值 */
     perLv: number;
@@ -70,22 +84,29 @@ export interface MetaUpgradeInfo {
     prereq: { id: MetaUpgradeId; lv: number } | null;
 }
 
-const UPGRADE_IDS: MetaUpgradeId[] = ['castle', 'damage', 'gold', 'shard', 'insight'];
+/** 锻造区渲染顺序：按解锁树分支排列，ResultDialog 前 4 条入左列、后 4 条入右列 */
+const UPGRADE_IDS: MetaUpgradeId[] = ['castle', 'orbCap', 'boardLab', 'damage', 'gold', 'shard', 'insight', 'forbiddenPack'];
 
 const UPGRADE_NAMES: Record<MetaUpgradeId, string> = {
     castle: '城堡加固',
+    orbCap: '弹珠槽扩容',
+    boardLab: '钉板实验台',
     damage: '弹珠打磨',
     gold: '开局资金',
     shard: '碎片收藏',
     insight: '战术洞察',
+    forbiddenPack: '禁忌卡包',
 };
 
 const UPGRADE_UNITS: Record<MetaUpgradeId, string> = {
     castle: '城堡血量',
+    orbCap: '牌库容量',
+    boardLab: '钉板版型',
     damage: '弹珠伤害',
     gold: '开局金币',
     shard: '碎片获取%',
     insight: '选牌保底',
+    forbiddenPack: '禁忌卡牌',
 };
 
 class MetaManagerClass {
@@ -93,7 +114,9 @@ class MetaManagerClass {
     shards = 0;
 
     /** 永久升级等级（0 ~ META_MAX_LV），跨局持久 */
-    levels: Record<MetaUpgradeId, number> = { castle: 0, damage: 0, gold: 0, shard: 0, insight: 0 };
+    levels: Record<MetaUpgradeId, number> = {
+        castle: 0, orbCap: 0, boardLab: 0, damage: 0, gold: 0, shard: 0, insight: 0, forbiddenPack: 0,
+    };
 
     /** 读档幂等守卫：首次访问时从存档恢复，之后不再重复读 */
     private _loaded = false;
@@ -252,17 +275,41 @@ class MetaManagerClass {
         return this.getLv('insight');
     }
 
-    /** 五条升级的展示信息（锻造区按此顺序渲染：三根轨 + 两子轨） */
+    /** 牌库容量加成（级数 × 1，DeckManager 叠加到基础软上限 8 之上） */
+    getOrbCapBonus(): number {
+        return this.getLv('orbCap') * META_UPGRADE_PER_LV.orbCap;
+    }
+
+    /** 钉板实验台等级（PegBoardManager 据此把版型 D(Lv1+)/E(Lv3+) 纳入随机池） */
+    getBoardLabLv(): number {
+        return this.getLv('boardLab');
+    }
+
+    /** 禁忌卡包等级（RewardDialog 据此放行 metaLock=forbiddenPack 的跨局专属卡：奇点 Lv1+ / 猎神 Lv3+） */
+    getForbiddenPackLv(): number {
+        return this.getLv('forbiddenPack');
+    }
+
+    /** 八条升级的展示信息（锻造区按此顺序渲染：三根轨 + 五子轨，树分支序） */
     getUpgradeList(): MetaUpgradeInfo[] {
         const describeInsight = (lv: number): string =>
-            (lv >= 3 ? '选牌保底: 史诗+' : lv >= 1 ? '选牌保底: 稀有+' : '选牌保底: 未激活');
+            (lv >= 3 ? '保底史诗' : lv >= 1 ? '保底稀有' : '未激活');
+        const describeBoardLab = (lv: number): string =>
+            (lv >= 3 ? '版型D+E' : lv >= 1 ? '版型D' : '未解锁');
+        const describeForbidden = (lv: number): string =>
+            (lv >= 3 ? '奇点+猎神' : lv >= 1 ? '聚能奇点' : '未解锁');
+        const describers: Partial<Record<MetaUpgradeId, (lv: number) => string>> = {
+            insight: describeInsight,
+            boardLab: describeBoardLab,
+            forbiddenPack: describeForbidden,
+        };
         return UPGRADE_IDS.map((id) => ({
             id,
             name: UPGRADE_NAMES[id],
             unit: UPGRADE_UNITS[id],
             perLv: META_UPGRADE_PER_LV[id],
             prereq: META_PREREQS[id],
-            describe: id === 'insight' ? describeInsight : undefined,
+            describe: describers[id],
         }));
     }
 }

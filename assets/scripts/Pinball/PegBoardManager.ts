@@ -3,6 +3,7 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { PegComponent, PegType, BOMB_RADIUS } from './PegComponent';
 import { RelicType } from '../Core/DataModels';
 import { RelicManager, TIDAL_GILD_COUNT } from '../Core/RelicManager';
+import { MetaManager } from '../Core/MetaManager';
 
 const { ccclass, property } = _decorator;
 
@@ -13,8 +14,26 @@ const LAYOUT_B = [5, 3, 5, 3, 5];
 /** 版型 C：4 + 5 + 3 + 5 + 4 = 21 颗（阶梯交错密集弹跳） */
 const LAYOUT_C = [4, 5, 3, 5, 4];
 
-/** 可选版型集合：每局随机取其一排布（三套均为 5 行 21 颗、最宽行恒 5 → 横向间距恒 172；相邻行奇偶半距错位，竖直直落通道宽 ≤ 半列距，封死整列贯通直落进漏斗的漏洞） */
-const PEG_LAYOUTS = [LAYOUT_A, LAYOUT_B, LAYOUT_C];
+/** 🌳 Meta「钉板实验台」Lv1 解锁版型 D：5 + 4 + 3 + 5 + 4 = 21（沙漏收腰，中路密集） */
+const LAYOUT_D = [5, 4, 3, 5, 4];
+/** 🌳 Meta「钉板实验台」Lv3 解锁版型 E：4 + 5 + 4 + 5 + 3 = 21（上密下疏，末行守护漏斗） */
+const LAYOUT_E = [4, 5, 4, 5, 3];
+
+/** 基础版型集合（恒可用）：每局随机取其一排布（三套均为 5 行 21 颗、最宽行恒 5 → 横向间距恒 172；相邻行奇偶半距错位，竖直直落通道宽 ≤ 半列距，封死整列贯通直落进漏斗的漏洞） */
+const BASE_PEG_LAYOUTS = [LAYOUT_A, LAYOUT_B, LAYOUT_C];
+
+/**
+ * 当前有效版型池 = 基础三套 + Meta「钉板实验台」解锁的额外版型（Lv1→D，Lv3→E）。
+ * 新版型经校验：5 行、和为 21、最宽行 5、无相邻等长行（→ 相邻行必半距错位，沿用既有「无直落通道」不变量），
+ * 且每个相邻行对都已在 A/B/C 中出现过，几何安全性由构造保证。
+ */
+export function activePegLayouts(): number[][] {
+    const lab = MetaManager.getBoardLabLv();
+    const pool = [...BASE_PEG_LAYOUTS];
+    if (lab >= 1) pool.push(LAYOUT_D);
+    if (lab >= 3) pool.push(LAYOUT_E);
+    return pool;
+}
 
 /** 每侧安全边距（px）：防止最外侧钉子半出 720×560 铺满区 */
 const EDGE_PADDING = 16;
@@ -82,8 +101,9 @@ export class PegBoardManager extends Component {
         }
         this.node.removeAllChildren();
 
-        // 2. 每局随机选一种版型，并按该版型逐行计算固定坐标（每行以 X=0 为中线水平居中）
-        const layout = PEG_LAYOUTS[Math.floor(Math.random() * PEG_LAYOUTS.length)];
+        // 2. 每局随机选一种版型（基础三套 + Meta 钉板实验台解锁版型），并按该版型逐行计算固定坐标（每行以 X=0 为中线水平居中）
+        const layouts = activePegLayouts();
+        const layout = layouts[Math.floor(Math.random() * layouts.length)];
         // 固定铺满 720×560：横向间距撑满最宽行、纵向间距撑满全部行，两侧各留 EDGE_PADDING，整体以节点中心对称
         const maxCols = Math.max(...layout);
         const spacingX = (BOARD_WIDTH - EDGE_PADDING * 2) / Math.max(1, maxCols - 1);

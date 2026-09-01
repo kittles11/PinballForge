@@ -8,7 +8,7 @@ import { RelicManager } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
 import { ShopDialog } from './ShopDialog';
 import { OrbBalance } from '../Core/OrbBalance';
-import { MetaManager, META_MAX_LV } from '../Core/MetaManager';
+import { MetaManager } from '../Core/MetaManager';
 import type { MetaUpgradeId } from '../Core/MetaManager';
 import { Theme } from '../Core/ArtTheme';
 
@@ -122,45 +122,51 @@ export class ResultDialog extends Component {
 
     // ---------- ⚒ 锻造区（纯代码构建，零 Inspector 配置；TutorialManager 同款模式） ----------
 
-    /** 幂等创建锻造区：碎片余额行 + 三条升级行（整行可点购买） */
+    /** 幂等创建锻造区：碎片余额行 + 八条升级行（双列 4×4，整行可点购买） */
     private ensureForgeSection(): void {
         if (this._forgeRoot?.isValid) {
             return;
         }
         const root = new Node('ForgeSection');
-        root.addComponent(UITransform).setContentSize(500, 190);
-        // 摆位（面板 560×560 居中锚点）：descLabel(y=40) 与 RestartButton(y=-140) 之间。
-        // 解锁树扩到 6 行（碎片余额 + 5 升级行）：根上移至 -36、行距 34→27、字号 17→15 压缩排布。
-        root.setPosition(0, -36, 0);
+        root.addComponent(UITransform).setContentSize(520, 150);
+        // 摆位（面板居中锚点）：落在 descLabel(y=40) 与 RestartButton(y=-140) 之间的 180px 带内。
+        // 解锁树扩到 8 条 → 双列 4×4（每列 4 行 @30px=120px + 顶部碎片行），单列放不下故分列。
+        root.setPosition(0, -46, 0);
         this.node.addChild(root);
         this._forgeRoot = root;
 
-        // 第一行：碎片余额（本局获得 + 持有总量）
-        this._shardsLabel = this.makeForgeRow(root, 0, 44, 19, FORGE_COLOR_SHARDS);
-        // 之后五行：永久升级（与 MetaManager.getUpgradeList() 固定顺序一致），整行可点击购买
+        // 顶部：碎片余额（整行居中）
+        this._shardsLabel = this.makeForgeRow(root, 0, 44, 18, FORGE_COLOR_SHARDS, 520);
+        // 八条升级：前 4 条左列、后 4 条右列（与 getUpgradeList 树分支序一致），整行可点购买
         this._rowLabels = MetaManager.getUpgradeList().map((u, i) => {
-            const label = this.makeForgeRow(root, 0, 16 - i * 27, 15, Color.WHITE.clone());
+            const col = i < 4 ? 0 : 1;
+            const row = i % 4;
+            const x = col === 0 ? -128 : 128;
+            const y = 14 - row * 30;
+            const label = this.makeForgeRow(root, x, y, 13, Color.WHITE.clone(), 248);
             label.node.on(Node.EventType.TOUCH_END, () => this.onForgeRowClick(u.id), this);
             return label;
         });
     }
 
-    /** 锻造区一行：可触摸行节点（Label overflow=NONE 自适应文本宽，居中）+ 居中 Label */
-    private makeForgeRow(parent: Node, x: number, y: number, fontSize: number, color: Color): Label {
+    /** 锻造区一行：可触摸行节点（Label overflow=SHRINK 固定宽自适应）+ 居中 Label */
+    private makeForgeRow(parent: Node, x: number, y: number, fontSize: number, color: Color, width: number): Label {
         const rowNode = new Node('ForgeRow');
-        rowNode.addComponent(UITransform).setContentSize(500, 30);
+        rowNode.addComponent(UITransform).setContentSize(width, 28);
         rowNode.setPosition(x, y, 0);
         const label = rowNode.addComponent(Label);
         label.fontSize = fontSize;
-        label.lineHeight = fontSize + 10;
+        label.lineHeight = fontSize + 6;
         label.color = color;
+        label.overflow = Label.Overflow.SHRINK;
+        label.enableWrapText = false;
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
         label.verticalAlign = Label.VerticalAlign.CENTER;
         parent.addChild(rowNode);
         return label;
     }
 
-    /** 刷新锻造区文案与配色：可买金色 / 钱不够灰色 / 满级暗灰 / 🔒 未解锁灰色带前置说明 */
+    /** 刷新锻造区文案与配色：可买金色 / 钱不够灰色 / 满级暗灰 / 🔒 未解锁灰色带前置说明（双列紧凑文案） */
     private refreshForge(): void {
         if (this._shardsLabel?.isValid) {
             this._shardsLabel.string = `⚒ 精铸碎片 ${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
@@ -172,21 +178,21 @@ export class ResultDialog extends Component {
                 return;
             }
             const lv = MetaManager.getLv(u.id);
-            const effect = u.describe ? u.describe(lv) : `${u.unit}+${lv * u.perLv}`;
+            const effect = u.describe ? u.describe(lv) : `+${lv * u.perLv}`;
             if (!MetaManager.isUnlocked(u.id)) {
                 // 🌳 解锁树：子轨未达标 → 🔒 + 前置需求文案（规则对玩家可见，不靠猜）
                 const pre = u.prereq!;
                 const preName = list.find((x) => x.id === pre.id)?.name ?? pre.id;
-                label.string = `🔒 ${u.name}（需 ${preName} Lv${pre.lv} 解锁）`;
+                label.string = `🔒${u.name} 需${preName}${pre.lv}级`;
                 label.color = FORGE_COLOR_LOCKED;
                 return;
             }
             const price = MetaManager.getPrice(u.id);
             if (price < 0) {
-                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${effect}）· 已满级`;
+                label.string = `${u.name} Lv${lv} ${effect} MAX`;
                 label.color = FORGE_COLOR_MAXED;
             } else {
-                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${effect}）· ⚒${price} 点击升级`;
+                label.string = `${u.name} Lv${lv} ${effect} ⚒${price}`;
                 label.color = MetaManager.canAfford(u.id) ? FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED;
             }
         });

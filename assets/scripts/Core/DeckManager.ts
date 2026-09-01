@@ -5,6 +5,7 @@ import { DeckButtonController, TAP_SLOP } from '../UI/DeckButtonController';
 import { EventBus, GameEvents } from './EventBus';
 import { TutorialManager } from './TutorialManager';
 import { OrbBalance } from './OrbBalance';
+import { MetaManager } from './MetaManager';
 import { OpsBridge } from './OpsBridge';
 import { DailyTaskDialog } from '../UI/DailyTaskDialog';
 import { EnergyLabelController } from '../Game/EnergyLabelController';
@@ -27,7 +28,7 @@ const INITIAL_DECK_TYPES: number[] = [
     ORB_TYPE_LIGHTNING, ORB_TYPE_LAVA, ORB_TYPE_FROST,
 ];
 
-/** 牌库容量软上限：masterDeck 最多 8 颗，超限需先花金币删卡腾位 */
+/** 牌库容量基础软上限：masterDeck 最多 8 颗（Meta「弹珠槽扩容」在此之上叠加），超限需先花金币删卡腾位 */
 const MAX_DECK_SIZE = 8;
 
 /**
@@ -135,7 +136,7 @@ export class DeckManager extends Component {
      *  受牌库软上限约束：满 8 颗时拒绝添加并返回 false（需先删卡腾位）。 */
     public addOrbToDeck(type: number): boolean {
         if (!this.canAddOrb()) {
-            console.warn(`[DeckManager] 牌库已满（${this.masterDeck.length}/${MAX_DECK_SIZE}），无法添加「${ORB_TYPE_NAMES[type] ?? '未知'}」，请先删卡腾位`);
+            console.warn(`[DeckManager] 牌库已满（${this.masterDeck.length}/${this.maxDeckSize}），无法添加「${ORB_TYPE_NAMES[type] ?? '未知'}」，请先删卡腾位`);
             return false;
         }
         this.masterDeck.push(type);
@@ -144,9 +145,9 @@ export class DeckManager extends Component {
         return true;
     }
 
-    /** 牌库是否还能新增卡牌（软上限 → masterDeck.length < MAX_DECK_SIZE） */
+    /** 牌库是否还能新增卡牌（软上限 → masterDeck.length < 有效容量） */
     public canAddOrb(): boolean {
-        return this.masterDeck.length < MAX_DECK_SIZE;
+        return this.masterDeck.length < this.maxDeckSize;
     }
 
     /** 当前牌库总卡数（masterDeck 长度） */
@@ -154,9 +155,9 @@ export class DeckManager extends Component {
         return this.masterDeck.length;
     }
 
-    /** 牌库容量软上限（供商店显示「牌库已满 (X/8)」） */
+    /** 牌库有效容量（基础 8 + Meta「弹珠槽扩容」加成；供商店/背包显示「牌库已满 (X/N)」） */
     public get maxDeckSize(): number {
-        return MAX_DECK_SIZE;
+        return MAX_DECK_SIZE + MetaManager.getOrbCapBonus();
     }
 
     /**

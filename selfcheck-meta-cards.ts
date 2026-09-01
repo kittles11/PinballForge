@@ -19,7 +19,7 @@ const store = new Map<string, string>();
     setItem: (k: string, v: string): void => { store.set(k, String(v)); },
     removeItem: (k: string): void => { store.delete(k); },
 };
-const { CARD_DATABASE, enforceRarityFloor } = await import('./assets/scripts/Core/DataModels.ts');
+const { CARD_DATABASE, FORBIDDEN_CARDS, enforceRarityFloor } = await import('./assets/scripts/Core/DataModels.ts');
 const { MetaManager, META_PREREQS } = await import('./assets/scripts/Core/MetaManager.ts');
 
 const ROOT = resolve(process.cwd());
@@ -71,32 +71,58 @@ check('洞察地板接线：Lv1+ 稀有地板、Lv3+ 追加史诗地板（enforc
     && /insight >= 1[\s\S]{0,80}enforceRarityFloor\(this\._currentRewards, pool, '稀有'\)/.test(reward)
     && /insight >= 3[\s\S]{0,80}enforceRarityFloor\(this\._currentRewards, pool, '史诗'\)/.test(reward));
 
-// ── ④ Meta 解锁树（行为真跑） ──
-check('META_PREREQS：三根轨 null / shard 需 gold Lv3 / insight 需 damage Lv3',
+// ── ④ Meta 解锁树（行为真跑）：8 轨三条深度链 ──
+const LV = (o: Partial<Record<string, number>>): any =>
+    ({ castle: 0, orbCap: 0, boardLab: 0, damage: 0, gold: 0, shard: 0, insight: 0, forbiddenPack: 0, ...o });
+check('META_PREREQS 树形：三根轨 null + orbCap←castle3 / boardLab←orbCap2 / shard←gold3 / insight←damage3 / forbiddenPack←insight2',
     META_PREREQS.castle === null && META_PREREQS.damage === null && META_PREREQS.gold === null
+    && META_PREREQS.orbCap.id === 'castle' && META_PREREQS.orbCap.lv === 3
+    && META_PREREQS.boardLab.id === 'orbCap' && META_PREREQS.boardLab.lv === 2
     && META_PREREQS.shard.id === 'gold' && META_PREREQS.shard.lv === 3
-    && META_PREREQS.insight.id === 'damage' && META_PREREQS.insight.lv === 3);
-MetaManager.levels = { castle: 0, damage: 0, gold: 0, shard: 0, insight: 0 };
-MetaManager.shards = 9999;
-check('子轨初始锁定：gold/damage Lv0 时 shard/insight 未解锁',
-    !MetaManager.isUnlocked('shard') && !MetaManager.isUnlocked('insight'));
-check('未解锁拒绝购买（碎片充足也买不了 shard）', !MetaManager.buy('shard') && MetaManager.getLv('shard') === 0);
-MetaManager.levels.gold = 3;
-check('父轨达标即解锁：gold Lv3 → shard 解锁并可购买',
-    MetaManager.isUnlocked('shard') && MetaManager.buy('shard') && MetaManager.getLv('shard') === 1);
-check('canAfford 对未解锁子轨恒 false（insight 父轨未达标）',
-    MetaManager.canAfford('insight') === false);
-check('getUpgradeList 返回五条且带 prereq 字段（根轨 null / 子轨非 null）',
+    && META_PREREQS.insight.id === 'damage' && META_PREREQS.insight.lv === 3
+    && META_PREREQS.forbiddenPack.id === 'insight' && META_PREREQS.forbiddenPack.lv === 2);
+MetaManager.levels = LV({});
+MetaManager.shards = 99999;
+check('深度链初始全锁：castle/damage/gold Lv0 时五条子轨全未解锁',
+    !MetaManager.isUnlocked('orbCap') && !MetaManager.isUnlocked('boardLab')
+    && !MetaManager.isUnlocked('shard') && !MetaManager.isUnlocked('insight') && !MetaManager.isUnlocked('forbiddenPack'));
+check('未解锁拒绝购买（碎片充足也买不了 orbCap）', !MetaManager.buy('orbCap') && MetaManager.getLv('orbCap') === 0);
+// castle Lv3 → orbCap 解锁；orbCap Lv2 → boardLab 解锁（三级链 castle→orbCap→boardLab）
+MetaManager.levels = LV({ castle: 3 });
+check('一级解锁：castle Lv3 → orbCap 解锁可买',
+    MetaManager.isUnlocked('orbCap') && MetaManager.buy('orbCap') && MetaManager.getLv('orbCap') === 1);
+check('二级链未通：orbCap Lv1 < 2 → boardLab 仍锁', !MetaManager.isUnlocked('boardLab'));
+MetaManager.levels = LV({ castle: 3, orbCap: 2 });
+check('二级解锁：orbCap Lv2 → boardLab 解锁可买',
+    MetaManager.isUnlocked('boardLab') && MetaManager.buy('boardLab') && MetaManager.getLv('boardLab') === 1);
+// damage→insight→forbiddenPack 三级链
+MetaManager.levels = LV({ damage: 3, insight: 2 });
+check('三级链：damage Lv3+insight Lv2 → forbiddenPack 解锁可买',
+    MetaManager.isUnlocked('forbiddenPack') && MetaManager.buy('forbiddenPack') && MetaManager.getLv('forbiddenPack') === 1);
+check('canAfford 对未解锁子轨恒 false（shard 父轨 gold 未达标）',
+    MetaManager.canAfford('shard') === false);
+check('getUpgradeList 返回八条且带 prereq/describe（三条 describe 子轨齐全）',
     (() => {
         const list = MetaManager.getUpgradeList();
-        return list.length === 5
-            && list.find((u: any) => u.id === 'castle').prereq === null
-            && list.find((u: any) => u.id === 'shard').prereq !== null
-            && typeof list.find((u: any) => u.id === 'insight').describe === 'function';
+        const byId = (id: string) => list.find((u: any) => u.id === id);
+        return list.length === 8
+            && byId('castle').prereq === null
+            && byId('orbCap').prereq !== null && byId('boardLab').prereq !== null && byId('forbiddenPack').prereq !== null
+            && typeof byId('insight').describe === 'function'
+            && typeof byId('boardLab').describe === 'function'
+            && typeof byId('forbiddenPack').describe === 'function';
+    })());
+check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；forbiddenPack Lv1→聚能奇点 / Lv3→奇点+猎神',
+    (() => {
+        const list = MetaManager.getUpgradeList();
+        const bl = list.find((u: any) => u.id === 'boardLab').describe;
+        const fp = list.find((u: any) => u.id === 'forbiddenPack').describe;
+        return bl(1).includes('版型D') && !bl(1).includes('E') && bl(3).includes('D+E')
+            && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神');
     })());
 
 // ── ⑤ 碎片加成 + enforceRarityFloor 纯函数 ──
-MetaManager.levels = { castle: 0, damage: 0, gold: 3, shard: 2, insight: 0 };
+MetaManager.levels = LV({ gold: 3, shard: 2 });
 check('碎片收藏 Lv2 → getShardBonus=30%', MetaManager.getShardBonus() === 30);
 const before = MetaManager.getShards();
 const gained = MetaManager.grantRunReward(1, 1, false);
@@ -137,6 +163,30 @@ check('地板不改入参数组（纯函数）',
         enforceRarityFloor(drawn, pool, '史诗', () => 0);
         return drawn.map((x: any) => x.id).join(',') === snapshot;
     })());
+
+// ── ⑥ 新轨接线 + 禁忌卡数据 ──
+const deck = strip(read('Core', 'DeckManager.ts'));
+const board = strip(read('Pinball', 'PegBoardManager.ts'));
+check('弹珠槽扩容接线：maxDeckSize = 基础 8 + getOrbCapBonus，canAddOrb 走有效容量',
+    /get maxDeckSize\(\): number \{\s*return MAX_DECK_SIZE \+ MetaManager\.getOrbCapBonus\(\);/.test(deck)
+    && /this\.masterDeck\.length < this\.maxDeckSize/.test(deck));
+check('getOrbCapBonus 行为：orbCap Lv3 → +3',
+    (() => { MetaManager.levels = LV({ orbCap: 3 }); return MetaManager.getOrbCapBonus() === 3; })());
+check('钉板实验台接线：PegBoardManager 经 activePegLayouts 消费 getBoardLabLv',
+    /getBoardLabLv\(\)/.test(board) && /activePegLayouts\(\)/.test(board));
+check('禁忌卡包数据：2 张跨局专属卡，metaLock 指向 forbiddenPack Lv1/Lv3，复用既有 actionType',
+    FORBIDDEN_CARDS.length === 2
+    && FORBIDDEN_CARDS.every((c: any) => c.metaLock && c.metaLock.track === 'forbiddenPack')
+    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.lv === 1
+    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_singularity').actionType === 'BuffHeavy'
+    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_godslayer').metaLock.lv === 3
+    && FORBIDDEN_CARDS.find((c: any) => c.id === 'forb_godslayer').actionType === 'AntiElite');
+check('禁忌卡默认不在 CARD_DATABASE（常规局抽不到，仅经 forbiddenPack 解锁并入池）',
+    !CARD_DATABASE.some((c: any) => c.id === 'forb_singularity' || c.id === 'forb_godslayer'));
+check('RewardDialog 按 metaLock 档位过滤并入禁忌卡（getLv(track) >= lv）',
+    /FORBIDDEN_CARDS/.test(reward)
+    && /!c\.metaLock \|\| MetaManager\.getLv\(c\.metaLock\.track as MetaUpgradeId\) >= c\.metaLock\.lv/.test(reward)
+    && /\[\.\.\.REWARD_CARD_POOL, \.\.\.forbiddenUnlocked\]/.test(reward));
 
 console.log(failed === 0 ? '\n✅ 应答卡 + Meta 解锁树自检全部通过' : `\n❌ ${failed} 项未通过`);
 if (failed > 0) process.exit(1);

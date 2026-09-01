@@ -105,8 +105,8 @@ check('锻造区五行升级来自 getUpgradeList（整行可点 onForgeRowClick
     /MetaManager\.getUpgradeList\(\)\.map/.test(result)
     && /private onForgeRowClick\(id: MetaUpgradeId\): void/.test(result)
     && /MetaManager\.buy\(id\)/.test(result));
-check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（6 行压缩排布 root y=-36）',
-    /setPosition\(0, -36, 0\)/.test(result));
+check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（8 轨双列 4×4，root y=-46）',
+    /setPosition\(0, -46, 0\)/.test(result));
 check('可买金色 / 不可买灰 / 满级暗灰（颜色反馈三态）',
     /FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED/.test(result) && /FORGE_COLOR_MAXED/.test(result));
 

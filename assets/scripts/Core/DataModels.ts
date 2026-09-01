@@ -434,6 +434,8 @@ export interface CardData {
     orbType?: number;
     /** 效果数值：护甲值 / 回复量 / 金币数 / 倍率等 */
     value?: number;
+    /** 🌳 Meta 解锁门槛：需指定 meta 子轨达到指定等级才进入抽卡池（缺省 = 恒可用）。track 用字符串避免 DataModels 反向依赖 MetaManager 类型 */
+    metaLock?: { track: string; lv: number };
 }
 
 /** 标准卡库：战后三选一从中随机抽 3 张不重复（三大流派 + 中立通用共 12 张） */
@@ -522,6 +524,24 @@ export const CARD_DATABASE: CardData[] = [
         id: 'univ_bounty', title: '猎首契约', archetype: CardArchetype.Universal, rarity: '史诗',
         desc: '对精英（带词缀）与章节 Boss 的伤害提升 40%——高风险目标的专属解法。',
         actionType: 'AntiElite', value: 0.4,
+    },
+];
+
+/**
+ * 🌳 Meta「禁忌卡包」跨局专属卡：默认【不】进抽卡池，仅当 forbiddenPack 子轨达到对应档位后，
+ * 由 RewardDialog 并入卡池。均为既有 actionType 的封顶强化版（复用现有结算钩子，零新机制），
+ * 以「跨局解锁的稀有强力选项」承载长线目标感。
+ */
+export const FORBIDDEN_CARDS: CardData[] = [
+    {
+        id: 'forb_singularity', title: '聚能奇点', archetype: CardArchetype.Lava, rarity: '史诗',
+        desc: '【禁忌·跨局解锁】聚能漏斗（红）伤害倍率额外 +120%——熔岩流的封顶之作。',
+        actionType: 'BuffHeavy', value: 1.2, metaLock: { track: 'forbiddenPack', lv: 1 },
+    },
+    {
+        id: 'forb_godslayer', title: '猎神契约', archetype: CardArchetype.Universal, rarity: '史诗',
+        desc: '【禁忌·跨局解锁】对精英（带词缀）与章节 Boss 的伤害提升 100%。',
+        actionType: 'AntiElite', value: 1.0, metaLock: { track: 'forbiddenPack', lv: 3 },
     },
 ];
 

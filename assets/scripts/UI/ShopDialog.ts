@@ -197,7 +197,7 @@ export class ShopDialog extends Component {
             return; // 已售罄：限购 1 次
         }
         if (!DeckManager.instance?.canAddOrb()) {
-            this.showMessage('牌库已满（8/8），请先删卡腾位！', false);
+            this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
             return;
         }
         this.purchase(BUY_LIGHTNING_PRICE, ITEM_LIGHTNING, '⚡ 已购买闪电弹珠，永久加入卡组！', () => {
@@ -210,7 +210,7 @@ export class ShopDialog extends Component {
             return; // 已售罄：限购 1 次
         }
         if (!DeckManager.instance?.canAddOrb()) {
-            this.showMessage('牌库已满（8/8），请先删卡腾位！', false);
+            this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
             return;
         }
         this.purchase(BUY_LAVA_PRICE, ITEM_LAVA, '🌋 已购买熔岩弹珠，永久加入卡组！', () => {
