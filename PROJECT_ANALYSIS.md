@@ -13,6 +13,7 @@
 > 4. 音频补全：`Core/MusicManager.ts` 程序化 BGM（96 BPM Am-F-C-G、A/B 双乐句、Boss 打击层、胜/负 stinger、模态 ducking），零素材零 Inspector，覆盖自检 `selfcheck-music.ts`；数值敏感性工具 `tools/balance-double-halve.ts` + 报告 `docs/BALANCE_SENSITIVITY.md`。
 > 5. 遗物系统（P2-3）：修复**传奇藏宝箱空池软锁**（5 件收齐后第 5/10 关宝箱无可点卡 → 波次卡死，现回退常规三选一）；`MAX_RELICS` 显式上限 + `addRelic` 满池守卫；获得弹入跳字反馈、瓷片点击复习被动全文、占位展示 0/5。覆盖自检 `selfcheck-relics.ts`。另：`hit.wav` 实际被 MainScene/Orb/Peg 的 AudioSource 引用（本文档 §2/§10「未统一」记载已过时，勿删）；双扩展名 Prefab（LavaOrb/LightningOrb）已被删除，prefab 清单现为干净的 Enemy/Orb/Peg。
 > 6. Boss 特色行为（P2-1，设计稿 `docs/BOSS_DESIGN.md`）：章节轮换 C 破绽时刻（受击×2 窗口）/ B 君王诏令（召唤亲卫抢炮塔仇恨、死亡掉金）/ A 破阵坚盾（盾期炮伤×0.5，重炮剥 1 层/熔岩剥 2 层），第 1 章仅狂暴回复；`FIRE_TURRET` 载荷补可选 `funnelType`（倍率仍在发射端唯一乘入点）。覆盖自检 `selfcheck-boss-behaviors.ts`，全套 21 个自检脚本全绿。
+> 7. 精英词缀（P2-1 下半场，普通敌人多样化）：每关第 3 波精英（`WaveDef.isElite`，Boss 波不叠）随机挂 1 条按章解锁的词缀——🛡️铁壁(+2 盾)/⚡疾风(移速×1.35)/🩸血怒(2%回复·5s)/👑随从(死亡召 2 亲卫)，全部复用既有机制（护盾弧/moveSpeed/回复定时器/诏令召唤管线），血条上方常驻徽章 + 出生跳字宣告。覆盖自检 `selfcheck-elite-affixes.ts`，全套 22 个自检脚本全绿。
 
 ## 1. 项目基本信息
 

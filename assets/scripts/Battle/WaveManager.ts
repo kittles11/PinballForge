@@ -6,6 +6,7 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { EnemyController } from './EnemyController';
 import {
     WaveDef, RelicType, EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, rollEnemyType,
+    rollEliteAffix, AFFIX_STATS,
 } from '../Core/DataModels';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, CROWN_GOLD_AMOUNT, CROWN_SHIELD_AMOUNT } from '../Core/RelicManager';
@@ -173,6 +174,13 @@ export class WaveManager extends Component {
         ec.moveSpeed = stats.speedOverride > 0 ? stats.speedOverride : def.speed;
         ec.attackDamage = Math.max(1, Math.round(WAVE_BASE_ATTACK_DAMAGE * stats.attackDamageMult));
         enemy.setScale(stats.scale, stats.scale, 1);
+        // 🎖️ 精英波（每关第 3 波非 Boss）：掷一条已解锁词缀，把"大一号血包"变成机制怪
+        if (def.isElite && !def.isBoss) {
+            const affix = rollEliteAffix(LevelManager.currentChapter);
+            if (affix) {
+                ec.applyAffix(affix);
+            }
+        }
         // 错开 Y 高度，避免同屏多怪完全重叠
         enemy.setPosition(SPAWN_X, SPAWN_Y - index * SPAWN_Y_STEP, 0);
         enemy.setParent(this.node);

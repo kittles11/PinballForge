@@ -1,12 +1,13 @@
 import {
     _decorator, Component, Node, Sprite, Color, Vec3, Graphics, UITransform,
-    tween, Tween,
+    tween, Tween, Label,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import {
     EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, OrbType, RelicType,
     FunnelType, BossBehavior, BOSS_BEHAVIOR_STATS,
     bossBehaviorForChapter, bulwarkIntervalForChapter, summonHpRatioForChapter,
+    EnemyAffix, AFFIX_STATS,
 } from '../Core/DataModels';
 import { RelicManager, THORN_REFLECT_DAMAGE } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
@@ -112,6 +113,9 @@ export class EnemyController extends Component {
     /** 死亡掉金币（Boss 诏令亲卫由 WaveManager 置位；0=不掉） */
     public goldOnDeath = 0;
 
+    /** 🎖️ 精英词缀（WaveManager 出精英波时掷取并 applyAffix；Boss 与普通怪恒为 null） */
+    public affix: EnemyAffix | null = null;
+
     /**
      * 同屏存活敌人计数（含 0.36s 死亡动画中的尸体，偏保守）：君王诏令的同屏护栏用。
      * 不 import EnemyManager 查数——EnemyManager→EnemyController 已有引用，反向 import 会构成
@@ -196,6 +200,22 @@ export class EnemyController extends Component {
         }
     }
 
+    /**
+     * 🎖️ 施加精英词缀（WaveManager 在节点激活前调用，与 setupType 同时序）。
+     * 铁壁与铁甲怪天生护盾可叠加（2+2=4 层合法，onLoad 的 createShieldPips 读到叠加后层数）；
+     * 疾风在 WaveManager 已设定的 moveSpeed 上再乘；血怒/随从为标记行为，start/die 分别消费。
+     */
+    public applyAffix(affix: EnemyAffix): void {
+        this.affix = affix;
+        const s = AFFIX_STATS[affix];
+        if (s.shieldCharges) {
+            this.shieldCharges += s.shieldCharges;
+        }
+        if (s.speedMult) {
+            this.moveSpeed = Math.round(this.moveSpeed * s.speedMult);
+        }
+    }
+
     protected onLoad(): void {
         this.currentHp = this.maxHp;
         EnemyController._aliveCount += 1;
@@ -231,6 +251,20 @@ export class EnemyController extends Component {
             }
             if (this.bossBehavior !== BossBehavior.None) {
                 console.log(`[Enemy] 👹 Boss 特色行为就位：${this.bossBehavior}（第 ${LevelManager.currentChapter} 章轮换表）`);
+            }
+        }
+
+        // 🎖️ 精英词缀：常驻徽章 + 出生跳字宣告；血怒挂半强度回复定时器
+        if (this.affix !== null) {
+            this.ensureAffixBadge();
+            const s = AFFIX_STATS[this.affix];
+            FloatingTextManager.instance?.showText(
+                `🎖️ ${s.icon} ${s.name}！`,
+                new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y + 20, 0),
+                Theme.ui.gold, true,
+            );
+            if (this.affix === EnemyAffix.Vital && s.regenInterval) {
+                this.schedule(this.vitalRegen, s.regenInterval);
             }
         }
 
@@ -616,6 +650,39 @@ export class EnemyController extends Component {
         }, BOSS_BEHAVIOR_STATS.exposeTelegraph);
     }
 
+    /** 🎖️ 血怒回复：每 5s 回 2% 最大生命（Boss 狂暴回复的半强度同款模型，冰封不挡回复） */
+    private vitalRegen(): void {
+        if (this._dead || !this.node?.isValid || this.currentHp <= 0 || this.currentHp >= this.maxHp) {
+            return;
+        }
+        const ratio = AFFIX_STATS[EnemyAffix.Vital].regenRatio;
+        const heal = Math.min(this.maxHp - this.currentHp, Math.round(this.maxHp * ratio));
+        this.currentHp += heal;
+        this.updateHpBar();
+        FloatingTextManager.instance?.showText(
+            `+${heal} 🩸`,
+            new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
+            BOSS_REGEN_TEXT_COLOR,
+        );
+    }
+
+    /** 🎖️ 词缀徽章：血条上方常驻小图标（持续可读信号；节点随敌人销毁自然回收） */
+    private ensureAffixBadge(): void {
+        if (!this.affix || !this.node?.isValid || this.node.getChildByName('AffixBadge')) {
+            return;
+        }
+        const n = new Node('AffixBadge');
+        n.layer = this.node.layer;
+        n.addComponent(UITransform).setContentSize(40, 24);
+        const label = n.addComponent(Label);
+        label.string = AFFIX_STATS[this.affix].icon;
+        label.fontSize = 20;
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        n.setPosition(0, HP_BAR_OFFSET_Y + 24, 0);
+        this.node.addChild(n);
+    }
+
     /** 解除急冻定身：恢复移动并还原身体颜色 */
     private unfreeze(): void {
         this.isFrozen = false;
@@ -857,6 +924,20 @@ export class EnemyController extends Component {
                 count: ENEMY_TYPE_STATS[EnemyType.Slime].splitCount,
                 hp: this.maxHp,
                 speed: this.moveSpeed,
+            });
+        }
+        // 🎖️ 随从词缀：精英死亡召唤 2 只亲卫（复用诏令 summon 管线；不掉金币——亲卫本身就是漏防惩罚）
+        if (this.affix === EnemyAffix.Retinue && !this.isMini && this.node?.isValid) {
+            const s = AFFIX_STATS[EnemyAffix.Retinue];
+            EventBus.emit(GameEvents.ENEMY_SPLIT, {
+                x: this.node.position.x - 30,
+                y: this.node.position.y,
+                count: s.summonCount,
+                hp: Math.max(1, Math.round(this.maxHp * s.summonHpRatio)),
+                speed: this.moveSpeed,
+                summon: true,
+                goldDrop: 0,
+                spawnType: EnemyType.Normal,
             });
         }
         // 停掉 Boss 狂暴回复等全部定时器（死亡后不再回血）

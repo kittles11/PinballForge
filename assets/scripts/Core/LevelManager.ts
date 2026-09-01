@@ -79,6 +79,8 @@ class LevelManagerClass {
             speed,
             spawnInterval: WAVE_SPAWN_INTERVALS[w - 1],
             isBoss,
+            // 精英波：每关第 3 波（第 10 关升级为 Boss，不叠加词缀）
+            isElite: isLast && !isBoss,
             scale: isBoss ? BOSS_SCALE : 1,
         };
     }

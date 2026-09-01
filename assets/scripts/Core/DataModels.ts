@@ -88,6 +88,8 @@ export interface WaveDef {
     spawnInterval: number;
     /** 是否高血量 Boss 波（isBoss = true 时本波固定出 EnemyType.Boss） */
     isBoss: boolean;
+    /** 是否精英波（每关第 3 波非 Boss：单只 ×2.5 血精英，WaveManager 为其掷精英词缀） */
+    isElite: boolean;
     /** 体型缩放（兼容保留：类型体型已统一由 ENEMY_TYPE_STATS.scale 接管） */
     scale?: number;
     /** 本波敌人类型（缺省时由 WaveManager 按波次权重池混合随机；Boss 波固定 Boss） */
@@ -197,6 +199,58 @@ export function bulwarkIntervalForChapter(chapter: number): number {
 export function summonHpRatioForChapter(chapter: number): number {
     const grow = Math.max(0, chapter - 3) * BOSS_BEHAVIOR_STATS.summonHpRatioPerChapter;
     return Math.min(BOSS_BEHAVIOR_STATS.summonHpRatioCap, BOSS_BEHAVIOR_STATS.summonHpRatioBase + grow);
+}
+
+/**
+ * 🎖️ 精英词缀（P2-1 下半场：普通敌人内容多样化，替代"×2.5 血大一号"的公式膨胀）。
+ * 每关第 3 波的单只精英（第 10 关为 Boss，不参与）随机挂 1 条已解锁词缀，
+ * 全部效果复用既有机制：铁壁=铁甲格挡弧 / 疾风=moveSpeed / 血怒=狂暴回复半强度 / 随从=诏令召唤管线。
+ */
+export enum EnemyAffix {
+    Bulwark = 'Bulwark',
+    Haste = 'Haste',
+    Vital = 'Vital',
+    Retinue = 'Retinue',
+}
+
+/** 词缀展示与数值表（外观 icon + 名称供徽章与出生跳字，数值供 EnemyController 应用） */
+export const AFFIX_STATS: Record<EnemyAffix, {
+    icon: string;
+    name: string;
+    shieldCharges?: number;
+    speedMult?: number;
+    regenRatio?: number;
+    regenInterval?: number;
+    summonCount?: number;
+    summonHpRatio?: number;
+}> = {
+    [EnemyAffix.Bulwark]: { icon: '🛡️', name: '铁壁', shieldCharges: 2 },
+    [EnemyAffix.Haste]: { icon: '⚡', name: '疾风', speedMult: 1.35 },
+    [EnemyAffix.Vital]: { icon: '🩸', name: '血怒', regenRatio: 0.02, regenInterval: 5 },
+    [EnemyAffix.Retinue]: { icon: '👑', name: '随从', summonCount: 2, summonHpRatio: 0.25 },
+};
+
+/** 词缀解锁章节（与敌人解锁同范式）：铁壁第 1 章 / 疾风第 2 章 / 血怒第 3 章 / 随从第 4 章 */
+export const AFFIX_UNLOCK_CHAPTER: Record<EnemyAffix, number> = {
+    [EnemyAffix.Bulwark]: 1,
+    [EnemyAffix.Haste]: 2,
+    [EnemyAffix.Vital]: 3,
+    [EnemyAffix.Retinue]: 4,
+};
+
+/** 章节 → 已解锁词缀池（纯函数） */
+export function affixPoolForChapter(chapter: number): EnemyAffix[] {
+    return (Object.keys(AFFIX_UNLOCK_CHAPTER) as EnemyAffix[])
+        .filter((a) => AFFIX_UNLOCK_CHAPTER[a] <= chapter);
+}
+
+/** 精英出生时掷词缀（rand 可注入，自检确定性真跑；空池防御性返回 null） */
+export function rollEliteAffix(chapter: number, rand: () => number = Math.random): EnemyAffix | null {
+    const pool = affixPoolForChapter(chapter);
+    if (pool.length === 0) {
+        return null;
+    }
+    return pool[Math.min(pool.length - 1, Math.floor(rand() * pool.length))];
 }
 
 /** 运行时兜底手搓怪的身体半径（WaveManager 绘制与 EnemyController 重绘共用，保证染色一致） */
