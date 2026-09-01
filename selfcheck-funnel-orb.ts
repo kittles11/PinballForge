@@ -30,13 +30,15 @@ const audio = strip(read('Core', 'AudioManager.ts'));
 // DataModels 需断言枚举块注释与卡牌 desc 文案 → 保留原始文本（含注释）
 const models = read('Core', 'DataModels.ts');
 
-// ── 1. 事件载荷：珠子类型透传（根因修复） ──
-check('FIRE_TURRET 载荷含 orbType（珠子类型透传）',
-    /\[GameEvents\.FIRE_TURRET\]:\s*\{\s*damage:\s*number;\s*orbType:\s*OrbType\s*\}/.test(eventBus));
+// ── 1. 事件载荷：珠子类型透传（根因修复）──
+// ★ 契约演进（P2-1 Boss 坚盾）：载荷补可选 funnelType，仅作剥盾机制元数据；
+//   核心不变量不变——漏斗倍率仍在发射端一次性乘入，敌方绝不按漏斗重算伤害。
+check('FIRE_TURRET 载荷含 orbType + 可选 funnelType（珠子类型透传，剥盾语义随载荷）',
+    /\[GameEvents\.FIRE_TURRET\]:\s*\{\s*damage:\s*number;\s*orbType:\s*OrbType;\s*funnelType\?:\s*FunnelType\s*\}/.test(eventBus));
 
 // ── 2. OrbController：漏斗只做数值修饰，珠子类型原样广播 ──
-check('广播开火载荷为 { damage, orbType }（不再传漏斗 type）',
-    /EventBus\.emit\(GameEvents\.FIRE_TURRET,\s*\{\s*damage:\s*Math\.round\(damage\),\s*orbType:\s*this\.orbType\s*\}\)/.test(orbCtrl));
+check('广播开火载荷为 { damage, orbType, funnelType }（倍率已乘入，funnelType 仅供 Boss 剥盾）',
+    /EventBus\.emit\(GameEvents\.FIRE_TURRET,\s*\{\s*damage:\s*Math\.round\(damage\),\s*orbType:\s*this\.orbType,\s*funnelType:\s*type\s*\}\)/.test(orbCtrl));
 check('聚能倍率常量 FUNNEL_FOCUS_MULT = 2',
     /const\s+FUNNEL_FOCUS_MULT\s*=\s*2\s*;/.test(orbCtrl));
 check('精炼倍率常量 FUNNEL_REFINE_MULT = 1.5',
@@ -59,24 +61,26 @@ check('createBulletNode 按 orbType 四色分支（白/电光/火红/冰蓝）',
     && /orbType === OrbType\.Lightning/.test(turret)
     && /orbType === OrbType\.Frost/.test(turret)
     && /orbType === OrbType\.Lava/.test(turret));
-check('命中结算透传珠子类型 takeDamage(damage, orbType)',
-    /target\.takeDamage\(data\.damage,\s*data\.orbType\)/.test(turret));
+check('命中结算透传珠子类型与漏斗语义 takeDamage(damage, orbType, false, funnelType)',
+    /target\.takeDamage\(data\.damage,\s*data\.orbType,\s*false,\s*data\.funnelType \?\? null\)/.test(turret));
 check('弹体生成消费珠子类型 createBulletNode(data.orbType)',
     /this\.createBulletNode\(data\.orbType\)/.test(turret) && !/createBulletNode\(data\.type\)/.test(turret));
-check('炮塔不再引用漏斗类型 FunnelType',
-    !/FunnelType/.test(turret));
+check('炮塔对 funnelType 只透传不消费（弹体外观仍纯随 orbType，无漏斗倍率常量）',
+    /funnelType\?:\s*FunnelType/.test(turret) && !/FUNNEL_FOCUS_MULT|FUNNEL_REFINE_MULT/.test(turret));
 
 // ── 4. 敌人：受击特效跟随珠子类型 ──
-check('takeDamage 签名改为 (amount, orbType, rawFloor)',
-    /public takeDamage\(amount: number,\s*orbType: OrbType,\s*rawFloor = false\)/.test(enemy));
+check('takeDamage 签名 (amount, orbType, rawFloor, funnelType=null)（漏斗语义仅供 Boss 坚盾）',
+    /public takeDamage\(amount: number,\s*orbType: OrbType,\s*rawFloor = false,\s*funnelType: FunnelType \| null = null\)/.test(enemy));
 check('受击特效 switch(orbType)：霜冻冻结/雷电光闪/熔岩红光/普通白闪',
     /switch \(orbType\)/.test(enemy)
     && /case OrbType\.Frost:\s*[\s\S]*?this\.isFrozen = true;/.test(enemy)
     && /case OrbType\.Lightning:\s*[\s\S]*?this\.flashHit\(LIGHTNING_HIT_COLOR\)/.test(enemy)
     && /case OrbType\.Lava:\s*[\s\S]*?this\.flashHit\(HEAVY_HIT_COLOR\)/.test(enemy)
     && /default:\s*[\s\S]*?this\.flashHit\(Color\.WHITE\)/.test(enemy));
-check('敌方不再感知漏斗：重炮×2 分支已移除、无 FunnelType 残留',
-    !/baseDmg \* 2 \* EnemyController\.heavyOverloadMult/.test(enemy) && !/FunnelType/.test(enemy));
+check('敌方不按漏斗重算伤害：重炮×2 分支已移除；FunnelType 仅出现在剥盾判定一处',
+    !/baseDmg \* 2 \* EnemyController\.heavyOverloadMult/.test(enemy)
+    && !/FUNNEL_FOCUS_MULT|FUNNEL_REFINE_MULT/.test(enemy)
+    && (enemy.match(/FunnelType\.HeavyCannon/g) ?? []).length === 1);
 check('极寒易伤被动保留（冰封受伤 × iceVulnerableMult）',
     /this\.isFrozen\)\s*\{\s*dmg \*= EnemyController\.iceVulnerableMult;/.test(enemy));
 check('雷球连击免费攻击改走普通弹（takeFreeDamage → OrbType.Normal）',

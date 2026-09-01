@@ -50,6 +50,15 @@ export class AudioManager {
     // ---------- 绝对解锁 ----------
 
     /**
+     * 共享 AudioContext 出口（unlockAudio 惰性创建后非空）：
+     * MusicManager 等其它合成系统统一复用同一 ctx，规避浏览器单页上下文数量上限，
+     * 且首次手势解锁链路（warmup / unlockAudio）一次打通全部音频系统。
+     */
+    public static get context(): AudioContext | null {
+        return AudioManager.ctx;
+    }
+
+    /**
      * 手指触摸屏幕瞬间强制解锁：创建（若未建）并 resume（若 suspended）AudioContext。
      * 每次播放前调用即可保证浏览器自动播放策略放行；幂等，可反复调用。
      */

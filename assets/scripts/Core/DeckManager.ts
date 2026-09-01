@@ -8,6 +8,7 @@ import { OrbBalance } from './OrbBalance';
 import { OpsBridge } from './OpsBridge';
 import { DailyTaskDialog } from '../UI/DailyTaskDialog';
 import { EnergyLabelController } from '../Game/EnergyLabelController';
+import { MusicManager } from './MusicManager';
 
 const { ccclass, property } = _decorator;
 
@@ -69,6 +70,8 @@ export class DeckManager extends Component {
         DailyTaskDialog.ensureMounted();
         // ⚡ 顶部能量 Label 控制器自举（场景 EnergyLabel 节点从未挂本组件 → UPDATE_ENERGY 零监听）
         EnergyLabelController.ensureMounted();
+        // 🎵 程序化 BGM 自举（纯 Web Audio 合成零素材；每场景启动清终局标记并起播，弹窗 duck、Boss 加层）
+        MusicManager.ensureStarted();
         // ⚒ meta 永久升级「弹珠打磨」：开局套用伤害加成（OrbBalance.reset() 末尾同样套用，重开一局也覆盖）
         OrbBalance.applyMetaBonus();
     }

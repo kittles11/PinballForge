@@ -1,6 +1,6 @@
 import { _decorator, Component, Node, Collider2D, Contact2DType, IPhysics2DContact, RigidBody2D,
     Vec2, Vec3, Color, Sprite, Enum, instantiate, find, MotionStreak, builtinResMgr,
-    SpriteFrame, Texture2D } from 'cc';
+    SpriteFrame, Texture2D, UITransform } from 'cc';
 import { AudioManager, FIRE_SFX_COIN } from '../Core/AudioManager';
 import { FloatingTextManager } from '../Core/FloatingTextManager';
 import { EventBus, GameEvents } from '../Core/EventBus';
@@ -12,6 +12,9 @@ import { EnemyController } from '../Battle/EnemyController';
 import { OrbType, FunnelType, RelicType } from '../Core/DataModels';
 import { OrbBalance } from '../Core/OrbBalance';
 import { RelicManager } from '../Core/RelicManager';
+import { orbTrailColor, Theme } from '../Core/ArtTheme';
+import { RuntimeTex } from '../Core/RuntimeTex';
+import { FxManager } from '../Core/FxManager';
 
 const { ccclass, property } = _decorator;
 
@@ -60,17 +63,6 @@ const STREAK_FADE_TIME = 0.2;
 const STREAK_MIN_SEG = 2;
 /** 拖尾流光：粗细（px） */
 const STREAK_STROKE = 14;
-/** 球种拖尾颜色：普通银白 / 雷电青蓝电光 / 熔岩炽热橙红 / 霜冻雪白微蓝 */
-const ORB_STREAK_COLORS: Record<number, Color> = {
-    [OrbType.Normal]: new Color(255, 255, 255, 255),      // #FFFFFF
-    [OrbType.Lightning]: new Color(0, 255, 255, 255),     // #00FFFF
-    [OrbType.Lava]: new Color(255, 68, 0, 255),           // #FF4400
-    [OrbType.Frost]: new Color(0xE0, 0xF7, 0xFA, 255),    // #E0F7FA
-};
-
-/** 撞钉跳字颜色：熔岩球金红暴击 / 普通与雷球浅绿 */
-const LAVA_PEG_TEXT_COLOR = new Color(255, 102, 40, 255);
-const NORMAL_PEG_TEXT_COLOR = new Color(144, 238, 144, 255);
 
 /**
  * 弹珠类型：统一定义于 Core/DataModels（0 普通 / 1 雷球 / 2 熔岩），此处仅再导出 + 注册序列化元数据。
@@ -149,10 +141,9 @@ export class OrbController extends Component {
         if (this.orbType === OrbType.Normal) {
             this.detectOrbType();
         }
-        if (this.orbType !== OrbType.Normal) {
-            // initOrbType 幂等：发射路径已调用则无副作用；此处保证任何来源的球样式最终一致
-            this.initOrbType(this.orbType);
-        }
+        // initOrbType 幂等：发射路径已调用则无副作用；统一无条件补一次，
+        // 保证任何来源的球（含场景直放的普通球）都拿到一致的主题样式（白体 / glow / 拖尾）。
+        this.initOrbType(this.orbType);
         if (this.orbType === OrbType.Lava) {
             // 熔岩重质（密度 ×2 + 重建夹具）延迟一帧执行，绕开物理 step 锁，100% 生效
             this.scheduleOnce(() => this.applyLavaDensity(), 0);
@@ -203,12 +194,12 @@ export class OrbController extends Component {
         const rb = this.getComponent(RigidBody2D);
         if (type === OrbType.Lightning) {
             if (sp) {
-                sp.color = new Color(0, 255, 255); // 纯青蓝电光色
+                sp.color = Theme.orb.lightning; // 纯青蓝电光色
             }
             this.node.name = 'LightningOrb';
         } else if (type === OrbType.Lava) {
             if (sp) {
-                sp.color = new Color(255, 68, 0); // 熔岩火红色
+                sp.color = Theme.orb.lava; // 熔岩火红色
             }
             this.node.setScale(new Vec3(OrbBalance.lava.scale, OrbBalance.lava.scale, 1));
             if (rb) {
@@ -220,10 +211,19 @@ export class OrbController extends Component {
             }
         } else if (type === OrbType.Frost) {
             if (sp) {
-                sp.color = new Color(0xE0, 0xF7, 0xFA, 255); // 极淡冰蓝 #E0F7FA
+                sp.color = Theme.orb.frost; // 极淡冰蓝 #E0F7FA
             }
             this.node.name = 'FrostOrb';
+        } else if (type === OrbType.Normal) {
+            if (sp) {
+                // ★ 美术修复：普通球本体此前沿用 Prefab 烘焙的 #2DACE7 蓝，
+                //   与「银白」拖尾/瞄准线语义矛盾 → 统一为主题银白
+                sp.color = Theme.orb.normal;
+            }
         }
+
+        // ★ 弹珠辉光叠层（柔光体积感，幂等）
+        this.setupOrbGlow(type);
 
         // ★ 动态拖尾流光：按球种挂 MotionStreak（幂等），发射下落全程跟随对应属性的光迹
         this.setupMotionStreak(type);
@@ -244,6 +244,13 @@ export class OrbController extends Component {
             if (!streak) {
                 return;
             }
+        }
+        // ★ 柔边拖尾：优先用 RuntimeTex 程序化截面纹理（横向柔边 + 两端收口），
+        //   生成失败时回退内置纯白贴图（ui-sprite-frame）
+        const softTex = RuntimeTex.streakTexture();
+        if (softTex) {
+            streak.texture = softTex;
+        } else {
             const splash = builtinResMgr.get<SpriteFrame>('ui-sprite-frame');
             streak.texture = (splash?.texture as Texture2D | null) ?? null;
         }
@@ -251,7 +258,62 @@ export class OrbController extends Component {
         streak.minSeg = STREAK_MIN_SEG;
         streak.stroke = STREAK_STROKE;
         streak.fastMode = false;
-        streak.color = ORB_STREAK_COLORS[type] ?? Color.WHITE;
+        streak.color = orbTrailColor(type);
+    }
+
+    /**
+     * 弹珠辉光叠层（幂等）：主体之上叠一团加法混合 glow（径向体积光）+ 左上高光点，
+     * 把内置白圆硬边球升级为「辉光玻璃珠」。子节点无物理组件，不影响碰撞与染色链路。
+     */
+    private setupOrbGlow(type: number): void {
+        if (this._destroying) {
+            return;
+        }
+        const glowSF = RuntimeTex.glow();
+        if (!glowSF || !this.node?.isValid) {
+            return; // 纹理不可用时静默跳过：硬边球体也可接受
+        }
+        const tint = orbTrailColor(type);
+        // ① 主体辉光（径向柔光，熔岩球更大更烫）
+        let glow = this.node.getChildByName('OrbGlow');
+        if (!glow?.isValid) {
+            glow = new Node('OrbGlow');
+            glow.layer = this.node.layer;
+            glow.addComponent(UITransform);
+            const sp = glow.addComponent(Sprite);
+            sp.spriteFrame = glowSF;
+            sp.sizeMode = Sprite.SizeMode.CUSTOM;
+            sp.trim = false;
+            const mat = RuntimeTex.additiveMaterial();
+            if (mat) {
+                sp.customMaterial = mat;
+            }
+            glow.setParent(this.node);
+        }
+        const glowSp = glow.getComponent(Sprite);
+        if (glowSp?.isValid) {
+            glowSp.color = tint;
+        }
+        const glowSize = type === OrbType.Lava ? 62 : 52;
+        glow.getComponent(UITransform)?.setContentSize(glowSize, glowSize);
+        // ② 左上高光点（镜面反射小亮斑）
+        let dot = this.node.getChildByName('OrbHighlight');
+        if (!dot?.isValid) {
+            dot = new Node('OrbHighlight');
+            dot.layer = this.node.layer;
+            dot.addComponent(UITransform);
+            const dsp = dot.addComponent(Sprite);
+            dsp.spriteFrame = glowSF;
+            dsp.sizeMode = Sprite.SizeMode.CUSTOM;
+            dsp.trim = false;
+            const mat = RuntimeTex.additiveMaterial();
+            if (mat) {
+                dsp.customMaterial = mat;
+            }
+            dot.getComponent(UITransform)?.setContentSize(14, 14);
+            dot.setPosition(-6, 6, 0);
+            dot.setParent(this.node);
+        }
     }
 
     /** 兜底识别（防漏配）：仅在类型仍为 Normal 时按节点名识别；initOrbType 已赋型则不覆盖 */
@@ -420,6 +482,14 @@ export class OrbController extends Component {
             hitCount: peg.currentHitCount,
         });
 
+        // ★ 撞钉火花：粒数随该钉累计受击数爬升（与音效音高爬升对齐）；
+        //   副球（雷球分裂散弹）只发 1 粒，防高频爆池
+        FxManager.spark(
+            peg.node.worldPosition,
+            orbTrailColor(this.orbType),
+            this.isSplitChild ? 1 : Math.min(5, 2 + Math.floor(peg.currentHitCount / 2)),
+        );
+
         // ★ 乘倍钉结算修复：伤害/能量必须乘以 peg.multiplier（乘倍钉 ×2），否则乘倍钉完全不生效
         const mult = peg.multiplier;
 
@@ -434,7 +504,7 @@ export class OrbController extends Component {
             this.playLavaHitFeedback();
             // ★ 撞钉跳字：熔岩球金红暴击字样，在钉子位置跳出本次 +能量
             FloatingTextManager.instance?.showText(
-                `+${lavaGain}`, peg.node.worldPosition, LAVA_PEG_TEXT_COLOR, true,
+                `+${lavaGain}`, peg.node.worldPosition, Theme.orb.lavaText, true,
             );
             EventBus.emit(GameEvents.UPDATE_ENERGY, this.accumulatedDamage);
             return;
@@ -446,7 +516,7 @@ export class OrbController extends Component {
         this.accumulatedDamage += gain;
         // ★ 撞钉跳字：普通 / 雷球浅绿字样，在钉子位置跳出本次 +能量
         FloatingTextManager.instance?.showText(
-            `+${gain}`, peg.node.worldPosition, NORMAL_PEG_TEXT_COLOR,
+            `+${gain}`, peg.node.worldPosition, Theme.orb.textOk,
         );
         if (this.orbType === OrbType.Normal
             && this.hitCount % OrbBalance.normalComboThreshold === 0) {
@@ -474,7 +544,7 @@ export class OrbController extends Component {
             return;
         }
         const origin = sprite.color.clone();
-        sprite.color = new Color(220, 255, 255, 255);
+        sprite.color = Theme.orb.lightningFlash;
         this.scheduleOnce(() => {
             if (sprite.isValid && !this._destroying) {
                 sprite.color = origin;
@@ -508,7 +578,7 @@ export class OrbController extends Component {
             return;
         }
         const origin = sprite.color.clone();
-        sprite.color = new Color(255, 220, 120, 255);
+        sprite.color = Theme.orb.lavaFlash;
         this.scheduleOnce(() => {
             if (sprite.isValid && !this._destroying) {
                 sprite.color = origin;
@@ -545,7 +615,8 @@ export class OrbController extends Component {
         } else if (type === FunnelType.IceFreeze) {
             damage *= FUNNEL_REFINE_MULT;
         }
-        EventBus.emit(GameEvents.FIRE_TURRET, { damage: Math.round(damage), orbType: this.orbType });
+        // funnelType 随载荷透传：伤害倍率已乘入，但 Boss「破阵坚盾」需要漏斗语义做剥盾判定
+        EventBus.emit(GameEvents.FIRE_TURRET, { damage: Math.round(damage), orbType: this.orbType, funnelType: type });
 
         // ★ 结算大字（Balatro 式明牌）：伤害槽入槽即弹出「⚡基础 ×倍率」+「总伤 💥」两段跳字，
         //   玩家不用心算也能看懂漏斗的价值；金币槽保留专属「+20 💰」跳字（下方分支），不重复弹。
@@ -563,7 +634,7 @@ export class OrbController extends Component {
             FloatingTextManager.instance?.showText(
                 `${Math.round(damage)} 💥`,
                 new Vec3(pos.x, pos.y + 46, pos.z),
-                ORB_STREAK_COLORS[this.orbType] ?? Color.WHITE,
+                orbTrailColor(this.orbType),
                 true,
             );
         }

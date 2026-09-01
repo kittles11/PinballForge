@@ -128,6 +128,77 @@ export const ENEMY_TYPE_STATS: Record<EnemyType, EnemyTypeStats> = {
     [EnemyType.Boss]: { icon: '👹', color: { r: 255, g: 60, b: 60 }, hpMult: 1, speedOverride: 0, scale: 2.2, attackDamageMult: 2, shieldLayers: 0, splitCount: 0 },
 };
 
+/**
+ * 👹 Boss 特色行为类型（P2-1 内容多样化，设计稿见 docs/BOSS_DESIGN.md）。
+ * 单 Boss 恒为「狂暴回复 + 1 特色行为」（Hick 上限）；50 章靠轮换与参数缩放产生变化。
+ */
+export enum BossBehavior {
+    /** 第 1 章教学位：仅狂暴回复 */
+    None = 'None',
+    /** C 破绽时刻：每 10s 露 3s 受击 ×2 窗口（纯正反馈时机检查，第 2 章首出） */
+    Expose = 'Expose',
+    /** B 君王诏令：每 8s 召 2 只亲卫挡在身前抢炮塔仇恨（AoE/索敌检查，第 3 章首出） */
+    Summon = 'Summon',
+    /** A 破阵坚盾：周期举盾 3 层，盾期炮伤 ×0.5；重炮弹剥 1 层 / 熔岩弹剥 2 层（漏斗选择检查，第 4 章首出） */
+    Bulwark = 'Bulwark',
+}
+
+/** 行为轮换循环（第 2 章起）：C 教学 → B 考 AoE → A 考漏斗，相邻章节永不重复 */
+const BOSS_BEHAVIOR_CYCLE: readonly BossBehavior[] = [
+    BossBehavior.Expose, BossBehavior.Summon, BossBehavior.Bulwark,
+];
+
+/** 章节 → Boss 特色行为（纯函数，自检可直接真跑）：第 1 章 None，第 2 章起按轮换表 */
+export function bossBehaviorForChapter(chapter: number): BossBehavior {
+    if (chapter < 2) {
+        return BossBehavior.None;
+    }
+    return BOSS_BEHAVIOR_CYCLE[(chapter - 2) % BOSS_BEHAVIOR_CYCLE.length];
+}
+
+/** Boss 特色行为参数表（数值唯一真源；周期类参数随章节收紧/放大，全部设封底防失控） */
+export const BOSS_BEHAVIOR_STATS = {
+    // C 破绽时刻
+    exposeInterval: 10,
+    exposeTelegraph: 1,
+    exposeWindow: 3,
+    exposeDamageMult: 2,
+    // B 君王诏令
+    summonInterval: 8,
+    summonCount: 2,
+    summonCast: 1,
+    summonSpeedMult: 1.3,
+    summonGoldDrop: 5,
+    summonHpRatioBase: 0.12,
+    summonHpRatioPerChapter: 0.01,
+    summonHpRatioCap: 0.18,
+    // A 破阵坚盾
+    bulwarkIntervalBase: 12,
+    bulwarkIntervalTightenPerChapter: 0.5,
+    bulwarkIntervalFloor: 8,
+    bulwarkCast: 0.8,
+    bulwarkLayers: 3,
+    // 盾时长 6s < 最紧间隔 8s：保证下次举盾必在盾碎后触发（覆盖率 50%→75% 随章节收紧）
+    bulwarkDuration: 6,
+    bulwarkDamageMult: 0.5,
+    bulwarkPeelHeavy: 1,
+    bulwarkPeelLava: 2,
+    // 护栏：同屏敌人达该软上限时诏令静默跳过（防史莱姆分裂 + 召唤叠加失控）
+    onScreenCap: 10,
+};
+
+/** 坚盾举盾间隔（秒，纯函数）：第 4 章起每章收紧 0.5s，封底 8s */
+export function bulwarkIntervalForChapter(chapter: number): number {
+    const tighten = Math.max(0, chapter - 4) * BOSS_BEHAVIOR_STATS.bulwarkIntervalTightenPerChapter;
+    return Math.max(BOSS_BEHAVIOR_STATS.bulwarkIntervalFloor, BOSS_BEHAVIOR_STATS.bulwarkIntervalBase - tighten);
+}
+
+/** 亲卫血量占 Boss 最大生命比例（纯函数）：第 3 章起 12%，每章 +1%，封顶 18% */
+export function summonHpRatioForChapter(chapter: number): number {
+    const grow = Math.max(0, chapter - 3) * BOSS_BEHAVIOR_STATS.summonHpRatioPerChapter;
+    return Math.min(BOSS_BEHAVIOR_STATS.summonHpRatioCap, BOSS_BEHAVIOR_STATS.summonHpRatioBase + grow);
+}
+
 /** 运行时兜底手搓怪的身体半径（WaveManager 绘制与 EnemyController 重绘共用，保证染色一致） */
 export const ENEMY_BODY_RADIUS = 22;
 

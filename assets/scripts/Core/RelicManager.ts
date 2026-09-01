@@ -29,7 +29,15 @@ export interface RelicInfo {
 /** 全部遗物的展示信息（无 cc 依赖的纯展示数据，来源为 RELIC_DATABASE） */
 export const RELIC_INFO: Record<RelicType, RelicInfo> = RELIC_DATABASE;
 
+/** 全部遗物（商店展示顺序） */
 export { ALL_RELIC_TYPES };
+
+/**
+ * 遗物持有上限（数据侧唯一真源）：遗物种类天然唯一（同种不可重复），
+ * 上限即全表数量——藏宝箱只从未拥有遗物中抽取，抽尽即空池（RewardDialog 已做
+ * 空池回退常规三选一，杜绝无可点卡软锁）。规则对玩家可见：遗物栏占位与背包均展示 x/5。
+ */
+export const MAX_RELICS = ALL_RELIC_TYPES.length;
 
 /** 遗物栏锚点 Y 坐标（px）：顶部 HUD 数字之下、对战区之上，居中；与顶部三栏（城堡血量 / 波次 / 金币）错开避免重叠 */
 const RELIC_BAR_Y = 550;
@@ -100,9 +108,13 @@ export class RelicManager extends Component {
         }
     }
 
-    /** 获得一枚遗物（同种重复获得返回 false） */
+    /** 获得一枚遗物（同种重复获得返回 false；全表收集满后同样拒绝——上限规则唯一守卫点） */
     public static addRelic(type: RelicType): boolean {
         if (RelicManager.ownedRelics.has(type)) {
+            return false;
+        }
+        if (RelicManager.ownedRelics.size >= MAX_RELICS) {
+            console.warn(`[Relic] 遗物已满 ${MAX_RELICS}/${MAX_RELICS}，拒绝再获得：${type}`);
             return false;
         }
         RelicManager.ownedRelics.add(type);

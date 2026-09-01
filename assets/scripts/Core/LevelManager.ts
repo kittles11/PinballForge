@@ -1,4 +1,4 @@
-import { WaveDef } from './DataModels';
+import type { WaveDef } from './DataModels';
 
 /** 本地存档键名：章节 / 关卡进度用全局 localStorage 持久化 */
 const SAVE_KEY = 'pinballforge_progress';

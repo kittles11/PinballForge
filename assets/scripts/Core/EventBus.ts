@@ -1,5 +1,5 @@
 import { EventTarget } from 'cc';
-import type { Vec2Like, WaveDef, OrbType, RelicType } from './DataModels';
+import type { Vec2Like, WaveDef, OrbType, RelicType, FunnelType, EnemyType } from './DataModels';
 import type { EnemyController } from '../Battle/EnemyController';
 
 /** 全局事件名 */
@@ -53,12 +53,14 @@ export interface GameEventMap {
     [GameEvents.ORB_HIT_PEG]: { pegId: string; orbId: string; points: number; hitCount: number };
     [GameEvents.ORB_ENTER_FUNNEL]: { orbId: string; funnelId: string };
     [GameEvents.UPDATE_ENERGY]: number;
-    [GameEvents.FIRE_TURRET]: { damage: number; orbType: OrbType };
+    /** 炮塔开火（funnelType：入槽漏斗类型，Boss「破阵坚盾」剥盾判定用；可选字段向后兼容） */
+    [GameEvents.FIRE_TURRET]: { damage: number; orbType: OrbType; funnelType?: FunnelType };
     [GameEvents.ATTACK_CASTLE]: { damage: number };
     [GameEvents.GAIN_GOLD]: { amount: number; total?: number };
     [GameEvents.WAVE_START]: { config: WaveDef };
     [GameEvents.ENEMY_KILLED]: EnemyController;
-    [GameEvents.ENEMY_SPLIT]: { x: number; y: number; count: number; hp: number; speed: number };
+    /** 分裂/召唤请求：史莱姆死亡分裂（默认）；summon=true 时为 Boss「君王诏令」亲卫召唤（Normal 模板 + 死亡掉金币） */
+    [GameEvents.ENEMY_SPLIT]: { x: number; y: number; count: number; hp: number; speed: number; summon?: boolean; goldDrop?: number; spawnType?: EnemyType };
     [GameEvents.GAME_OVER]: void;
     [GameEvents.GAME_VICTORY]: void;
     [GameEvents.SHOW_REWARDS]: void;

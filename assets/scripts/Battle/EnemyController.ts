@@ -3,20 +3,28 @@ import {
     tween, Tween,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
-import { EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, OrbType, RelicType } from '../Core/DataModels';
+import {
+    EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, OrbType, RelicType,
+    FunnelType, BossBehavior, BOSS_BEHAVIOR_STATS,
+    bossBehaviorForChapter, bulwarkIntervalForChapter, summonHpRatioForChapter,
+} from '../Core/DataModels';
 import { RelicManager, THORN_REFLECT_DAMAGE } from '../Core/RelicManager';
+import { LevelManager } from '../Core/LevelManager';
+import { GoldManager } from '../Core/GoldManager';
 import { FloatingTextManager } from '../Core/FloatingTextManager';
+import { cloneColor, rgb, Theme } from '../Core/ArtTheme';
+import { FxManager } from '../Core/FxManager';
 
 const { ccclass, property } = _decorator;
 
 /** 霜冻弹单体冻结时长（秒） */
 const FREEZE_DURATION = 3;
 /** 急冻时身体变冰蓝（#00FFFF 冰封色） */
-const FREEZE_COLOR = new Color(0, 255, 255, 255);
+const FREEZE_COLOR = Theme.enemy.freeze;
 /** 熔岩弹受击时身体闪的大红光颜色 */
-const HEAVY_HIT_COLOR = new Color(255, 0, 0, 255);
+const HEAVY_HIT_COLOR = Theme.enemy.heavyHit;
 /** 雷球弹受击时身体闪的电光青白色 */
-const LIGHTNING_HIT_COLOR = new Color(190, 255, 255, 255);
+const LIGHTNING_HIT_COLOR = Theme.enemy.lightningHit;
 /** 受击白闪时长（秒） */
 const HIT_FLASH_DURATION = 0.08;
 /** 死亡爆开：先撑大到该倍率 */
@@ -27,27 +35,23 @@ const DIE_ANIM_DURATION = 0.3;
 const ATTACK_LUNGE_X = 25;
 
 /** 🛡️ 铁甲怪护盾格挡：身体闪的银蓝光 */
-const SHIELD_BLOCK_COLOR = new Color(190, 210, 255, 255);
+const SHIELD_BLOCK_COLOR = Theme.enemy.shieldBlock;
 /** 🛡️ 护盾格挡跳字颜色（冰蓝） */
-const SHIELD_TEXT_COLOR = new Color(120, 200, 255, 255);
-/** 头顶护盾层数指示点颜色（冰蓝实心圆） */
-const SHIELD_PIP_COLOR = new Color(90, 190, 255, 255);
-/** 护盾指示点半径 / 相邻间距 / 血条上方垂直偏移（px） */
-const SHIELD_PIP_RADIUS = 4;
-const SHIELD_PIP_GAP = 13;
-const SHIELD_PIP_OFFSET_Y = 58;
+const SHIELD_TEXT_COLOR = Theme.enemy.shieldText;
+/** 环绕护盾弧颜色（冰蓝） */
+const SHIELD_PIP_COLOR = Theme.enemy.shieldPip;
 /** 👹 Boss 专属技能「狂暴回复」：每 BOSS_REGEN_INTERVAL 秒回复最大生命的 BOSS_REGEN_RATIO */
 const BOSS_REGEN_INTERVAL = 6;
 const BOSS_REGEN_RATIO = 0.05;
 /** Boss 回血跳字颜色（毒绿） */
-const BOSS_REGEN_TEXT_COLOR = new Color(90, 230, 130, 255);
+const BOSS_REGEN_TEXT_COLOR = Theme.enemy.bossRegen;
 
 /** 受击伤害跳字：敌人头顶垂直偏移（px，血条上方） */
 const HIT_TEXT_OFFSET_Y = 60;
 /** 受击跳字颜色：普通伤害红字 / 熔岩暴击亮红大字 / 雷球电光青字 */
-const HIT_TEXT_COLOR = new Color(255, 70, 70, 255);
-const HEAVY_HIT_TEXT_COLOR = new Color(255, 40, 40, 255);
-const LIGHTNING_TEXT_COLOR = new Color(120, 230, 255, 255);
+const HIT_TEXT_COLOR = Theme.enemy.hurtText;
+const HEAVY_HIT_TEXT_COLOR = Theme.enemy.hurtTextHeavy;
+const LIGHTNING_TEXT_COLOR = Theme.enemy.lightningText;
 
 /** 头顶血条宽度（px） */
 const HP_BAR_WIDTH = 46;
@@ -95,6 +99,30 @@ export class EnemyController extends Component {
     /** 头顶护盾层数指示点根节点 */
     private _shieldPipsRoot: Node | null = null;
 
+    // ---------- 👹 Boss 特色行为（P2-1，设计稿 docs/BOSS_DESIGN.md；非 Boss 全部为默认值零开销） ----------
+
+    /** 本 Boss 的特色行为（start 时按章节轮换表分配） */
+    public bossBehavior: BossBehavior = BossBehavior.None;
+    /** A 坚盾：当前举盾层数（0=无盾；盾期炮伤 ×0.5 软减伤，重炮剥 1 层 / 熔岩剥 2 层，超时自动碎，绝不无敌） */
+    private _bulwarkLayers = 0;
+    /** C 破绽：当前处于受击 ×2 窗口 */
+    private _exposed = false;
+    /** 施法前摇：诏令/举盾预告期间定身停攻（可读信号 + 玩家 DPS 补偿），update 跳过行进 */
+    private _casting = false;
+    /** 死亡掉金币（Boss 诏令亲卫由 WaveManager 置位；0=不掉） */
+    public goldOnDeath = 0;
+
+    /**
+     * 同屏存活敌人计数（含 0.36s 死亡动画中的尸体，偏保守）：君王诏令的同屏护栏用。
+     * 不 import EnemyManager 查数——EnemyManager→EnemyController 已有引用，反向 import 会构成
+     * 运行时循环（selfcheck-code-standards 规则 4），故本类自维护：onLoad +1 / onDestroy -1，
+     * 场景重载全销毁自然归零。
+     */
+    private static _aliveCount = 0;
+    public static get aliveCount(): number {
+        return EnemyController._aliveCount;
+    }
+
     /** 游戏是否已结束（GAME_OVER 后全员锁定：彻底停步停攻、原地庆祝，绝不向左穿出屏幕） */
     isGameOver = false;
 
@@ -133,7 +161,7 @@ export class EnemyController extends Component {
     private isDestroyed = false;
 
     /** 身体初始颜色（急冻解除 / 白闪恢复时还原用） */
-    private _baseColor: Color = new Color(255, 255, 255, 255);
+    private _baseColor: Color = cloneColor(Theme.white);
     /** 身体初始缩放（死亡爆开动画基准） */
     private _baseScale: Vec3 = new Vec3(1, 1, 1);
 
@@ -156,12 +184,12 @@ export class EnemyController extends Component {
         // 优先染 Sprite（Prefab / 场景模板路径）；无 Sprite 时重绘 Graphics 兜底圆（运行时手搓怪路径）
         const sp = this.getComponent(Sprite) ?? this.getComponentInChildren(Sprite);
         if (sp?.isValid) {
-            sp.color = new Color(c.r, c.g, c.b, 255);
+            sp.color = rgb(c.r, c.g, c.b);
         } else {
             const g = this.getComponent(Graphics);
             if (g?.isValid) {
                 g.clear();
-                g.fillColor = new Color(c.r, c.g, c.b, 255);
+                g.fillColor = rgb(c.r, c.g, c.b);
                 g.circle(0, 0, ENEMY_BODY_RADIUS);
                 g.fill();
             }
@@ -170,6 +198,7 @@ export class EnemyController extends Component {
 
     protected onLoad(): void {
         this.currentHp = this.maxHp;
+        EnemyController._aliveCount += 1;
         const sp = this.getComponent(Sprite);
         if (sp?.isValid) {
             this._baseColor.set(sp.color);
@@ -186,9 +215,23 @@ export class EnemyController extends Component {
         this.updateHpBar();
         // 🛡️ 铁甲怪：血条上方绘制护盾层数指示点
         this.createShieldPips();
+        // ★ 美术叠层：落地投影 + 轮廓描边 + 类型剪影（幂等，纯代码零资源）
+        this.ensureEnemyArt();
         // 👹 章节大 Boss：启动周期狂暴回复（冰封不影响回复 → 需爆发伤害压制，不能磨死它）
         if (this.enemyType === EnemyType.Boss && !this.isMini) {
             this.schedule(this.bossRegen, BOSS_REGEN_INTERVAL);
+            // ★ P2-1 特色行为：按章节轮换表分配（回复 + 1 特色，Hick 上限），参数曲线见 DataModels
+            this.bossBehavior = bossBehaviorForChapter(LevelManager.currentChapter);
+            if (this.bossBehavior === BossBehavior.Expose) {
+                this.schedule(this.bossExposeCycle, BOSS_BEHAVIOR_STATS.exposeInterval);
+            } else if (this.bossBehavior === BossBehavior.Summon) {
+                this.schedule(this.bossSummonCycle, BOSS_BEHAVIOR_STATS.summonInterval);
+            } else if (this.bossBehavior === BossBehavior.Bulwark) {
+                this.schedule(this.bossBulwarkCycle, bulwarkIntervalForChapter(LevelManager.currentChapter));
+            }
+            if (this.bossBehavior !== BossBehavior.None) {
+                console.log(`[Enemy] 👹 Boss 特色行为就位：${this.bossBehavior}（第 ${LevelManager.currentChapter} 章轮换表）`);
+            }
         }
 
         // 游戏结束：全员立即停步停攻、原地庆祝（严格全局锁定）
@@ -200,6 +243,7 @@ export class EnemyController extends Component {
             return;
         }
         this.isDestroyed = true;
+        EnemyController._aliveCount = Math.max(0, EnemyController._aliveCount - 1);
         EventBus.off(GameEvents.GAME_OVER, this.onGameOver, this);
         // 安全注销：广播事件由 EnemyManager 即时移除引用（unregisterEnemy 内部按 indexOf 去重，幂等）。
         // 场景重载时若管理器先销毁（已停止监听并清空列表），本事件静默失效，无副作用。
@@ -217,6 +261,10 @@ export class EnemyController extends Component {
         }
         // 急冻定身：不移动也不攻击
         if (this.isFrozen) {
+            return;
+        }
+        // 👹 施法前摇：诏令 / 举盾预告期间定身停攻（读招窗口，位置交由场景静止表达）
+        if (this._casting) {
             return;
         }
         // 头槌冲撞动画播放中：位置交由 tween 驱动，跳过防线锁定
@@ -295,8 +343,9 @@ export class EnemyController extends Component {
 
     /** 受击入口：伤害已由发射端乘好漏斗倍率，此处按【珠子类型】结算受击特效；血量归零则死亡。
      *  @param orbType 珠子类型（决定受击特效：霜冻冻结 / 雷电光闪 / 熔岩红光暴击 / 普通白闪）
-     *  @param rawFloor true 时跳过「最低 50」保底（供荆棘反射这类固定小伤害使用，如实扣除）；默认 false 维持 50 保底。 */
-    public takeDamage(amount: number, orbType: OrbType, rawFloor = false): void {
+     *  @param rawFloor true 时跳过「最低 50」保底（供荆棘反射这类固定小伤害使用，如实扣除）；默认 false 维持 50 保底。
+     *  @param funnelType 入槽漏斗类型（TurretController 透传）：Boss「破阵坚盾」剥盾判定用；荆棘等直伤传 null。 */
+    public takeDamage(amount: number, orbType: OrbType, rawFloor = false, funnelType: FunnelType | null = null): void {
         if (this._dead || !this.node?.isValid) {
             return;
         }
@@ -305,7 +354,7 @@ export class EnemyController extends Component {
         //   每挡一次消耗 1 层。注意：霜冻冰球的全场冰封走 freeze() 不经伤害结算，不受护盾阻挡。
         if (this.shieldCharges > 0) {
             this.shieldCharges--;
-            this.redrawShieldPips();
+            this.redrawShieldPips(this.shieldCharges);
             this.flashHit(SHIELD_BLOCK_COLOR);
             FloatingTextManager.instance?.showText(
                 '🛡️ 格挡',
@@ -320,6 +369,39 @@ export class EnemyController extends Component {
         // 漏斗倍率（聚能 ×2 / 精炼 ×1.5）已在 OrbController 入槽结算时乘入，此处不再感知漏斗。
         const baseDmg = rawFloor ? Math.max(amount, 0) : Math.max(amount, 50);
         let dmg = baseDmg;
+        // 👹 A 破阵坚盾：盾期炮弹伤害 ×0.5（软减伤非免疫）；重炮（红槽）弹剥 1 层、熔岩弹剥 2 层——
+        //   漏斗选择与熔岩构筑在这里获得真实应答。荆棘等直伤（rawFloor）不吃盾也不剥盾。
+        if (this._bulwarkLayers > 0 && !rawFloor) {
+            let peeled = 0;
+            if (funnelType === FunnelType.HeavyCannon) {
+                peeled += BOSS_BEHAVIOR_STATS.bulwarkPeelHeavy;
+            }
+            if (orbType === OrbType.Lava) {
+                peeled += BOSS_BEHAVIOR_STATS.bulwarkPeelLava;
+            }
+            dmg *= BOSS_BEHAVIOR_STATS.bulwarkDamageMult;
+            const pos = new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0);
+            if (peeled > 0) {
+                this._bulwarkLayers = Math.max(0, this._bulwarkLayers - peeled);
+                if (this._bulwarkLayers === 0) {
+                    FloatingTextManager.instance?.showText('🛡️ 盾碎了！', pos, Theme.ui.gold, true);
+                } else {
+                    FloatingTextManager.instance?.showText(`🛡️ 剥盾 -${peeled}`, pos, SHIELD_TEXT_COLOR);
+                }
+                this.redrawShieldPips(this._bulwarkLayers);
+            } else {
+                FloatingTextManager.instance?.showText('🛡️ ×0.5', pos, SHIELD_TEXT_COLOR);
+            }
+        }
+        // 👹 C 破绽时刻：窗口内受到伤害 ×2（攒手时机检查，纯正反馈；窗口外零惩罚）
+        if (this._exposed && !rawFloor) {
+            dmg *= BOSS_BEHAVIOR_STATS.exposeDamageMult;
+            FloatingTextManager.instance?.showText(
+                '💢 破绽！',
+                new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y + 26, 0),
+                HEAVY_HIT_TEXT_COLOR, true,
+            );
+        }
         // ★ 极寒易伤被动：被冰封的敌人所受伤害额外 × 冰封易伤倍率（极寒易伤卡，默认 1）
         if (this.isFrozen) {
             dmg *= EnemyController.iceVulnerableMult;
@@ -327,6 +409,14 @@ export class EnemyController extends Component {
         this.currentHp = Math.max(0, this.currentHp - dmg);
         console.log(`[Enemy] 受到伤害: ${dmg}, 剩余血量: ${this.currentHp}`);
         this.updateHpBar();
+        // ★ 受击血雾：迸溅量随弹种加重（熔岩重弹更浓）
+        FxManager.spark(
+            this.node.worldPosition,
+            Theme.fx.blood,
+            orbType === OrbType.Lava ? 6 : 3,
+            150,
+            0.26,
+        );
         // ★ 受击伤害跳字：头顶飘出扣血数字（熔岩重弹暴击大字）
         this.showDamageText(dmg, orbType);
 
@@ -402,6 +492,130 @@ export class EnemyController extends Component {
         console.log(`[Enemy] 👹 Boss 狂暴回复 +${heal}，当前血量 ${this.currentHp}/${this.maxHp}`);
     }
 
+    /**
+     * 👹 B 君王诏令：1s 定身鼓身预告 → 经 ENEMY_SPLIT（summon 旗标）召唤亲卫，
+     *   WaveManager 走 Normal 模板生成（HP = Boss 最大生命 × 章节曲线，死亡掉金币）。
+     *   亲卫出生在 Boss 身前（左侧更近防线）→ 炮塔最前索敌自动被抢——系统涌现，零新索敌代码。
+     *   同屏敌人达软上限静默跳过本周期（护栏：防史莱姆分裂与召唤叠加失控）。
+     */
+    private bossSummonCycle(): void {
+        if (this._dead || !this.node?.isValid) {
+            return;
+        }
+        if (EnemyController.aliveCount >= BOSS_BEHAVIOR_STATS.onScreenCap) {
+            console.log('[Enemy] 👹 同屏敌人达上限，君王诏令跳过');
+            return;
+        }
+        this._casting = true;
+        const puff = this._baseScale.clone().multiplyScalar(1.15);
+        tween(this.node)
+            .to(BOSS_BEHAVIOR_STATS.summonCast / 2, { scale: puff })
+            .to(BOSS_BEHAVIOR_STATS.summonCast / 2, { scale: this._baseScale.clone() })
+            .start();
+        FloatingTextManager.instance?.showText(
+            '👑 诏令！',
+            new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
+            Theme.ui.gold, true,
+        );
+        this.scheduleOnce(() => {
+            this._casting = false;
+            if (this._dead || !this.node?.isValid) {
+                return;
+            }
+            const hp = Math.max(1, Math.round(this.maxHp * summonHpRatioForChapter(LevelManager.currentChapter)));
+            EventBus.emit(GameEvents.ENEMY_SPLIT, {
+                x: this.node.position.x - 40,
+                y: this.node.position.y,
+                count: BOSS_BEHAVIOR_STATS.summonCount,
+                hp,
+                speed: this.moveSpeed * BOSS_BEHAVIOR_STATS.summonSpeedMult,
+                summon: true,
+                goldDrop: BOSS_BEHAVIOR_STATS.summonGoldDrop,
+                spawnType: EnemyType.Normal,
+            });
+            console.log(`[Enemy] 👑 君王诏令：召唤 ${BOSS_BEHAVIOR_STATS.summonCount} 只亲卫 HP ${hp}`);
+        }, BOSS_BEHAVIOR_STATS.summonCast);
+    }
+
+    /**
+     * 👹 A 破阵坚盾：0.8s 定身缩身预告 → 举盾 3 层（复用铁甲怪护盾弧视觉）。
+     *   盾期炮伤 ×0.5 软减伤（非免疫，绝不无敌）；重炮（红槽）弹剥 1 层、熔岩弹剥 2 层（takeDamage 内结算）；
+     *   10s 超时自动碎——不应对的玩家等周期也能过，只是 DPS 与金币机会成本。
+     */
+    private bossBulwarkCycle(): void {
+        if (this._dead || !this.node?.isValid || this._bulwarkLayers > 0) {
+            return; // 上一盾未碎不叠加（定时器与盾时长已对齐，此为保险）
+        }
+        this._casting = true;
+        const crouch = this._baseScale.clone().multiplyScalar(0.9);
+        tween(this.node)
+            .to(BOSS_BEHAVIOR_STATS.bulwarkCast / 2, { scale: crouch })
+            .to(BOSS_BEHAVIOR_STATS.bulwarkCast / 2, { scale: this._baseScale.clone() })
+            .start();
+        FloatingTextManager.instance?.showText(
+            '🛡️ 坚盾！',
+            new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
+            SHIELD_TEXT_COLOR, true,
+        );
+        this.scheduleOnce(() => {
+            this._casting = false;
+            if (this._dead || !this.node?.isValid) {
+                return;
+            }
+            this._bulwarkLayers = BOSS_BEHAVIOR_STATS.bulwarkLayers;
+            this.ensureShieldPipsRoot();
+            this.redrawShieldPips(this._bulwarkLayers);
+            this.scheduleOnce(() => {
+                if (this._bulwarkLayers > 0) {
+                    this._bulwarkLayers = 0;
+                    this.redrawShieldPips(0);
+                    if (this.node?.isValid && !this._dead) {
+                        FloatingTextManager.instance?.showText(
+                            '🛡️ 盾已碎裂',
+                            new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
+                            Theme.ui.whiteGhost,
+                        );
+                    }
+                }
+            }, BOSS_BEHAVIOR_STATS.bulwarkDuration);
+        }, BOSS_BEHAVIOR_STATS.bulwarkCast);
+    }
+
+    /**
+     * 👹 C 破绽时刻：1s 双闪预告 → 3s 窗口（受击 ×2 + 身体放大红光提示）。
+     *   纯正反馈检查：窗口外零惩罚，攒球等窗口的玩家白赚倍率——第 2 章的时机教学位。
+     */
+    private bossExposeCycle(): void {
+        if (this._dead || !this.node?.isValid) {
+            return;
+        }
+        this.flashHit(Color.WHITE);
+        this.scheduleOnce(() => {
+            if (this._dead || !this.node?.isValid) {
+                return;
+            }
+            this.flashHit(HEAVY_HIT_COLOR);
+        }, BOSS_BEHAVIOR_STATS.exposeTelegraph / 2);
+        this.scheduleOnce(() => {
+            if (this._dead || !this.node?.isValid) {
+                return;
+            }
+            this._exposed = true;
+            this.node.setScale(this._baseScale.clone().multiplyScalar(1.12));
+            FloatingTextManager.instance?.showText(
+                '💢 破绽！×2',
+                new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
+                HEAVY_HIT_TEXT_COLOR, true,
+            );
+            this.scheduleOnce(() => {
+                this._exposed = false;
+                if (this.node?.isValid && !this._dead) {
+                    this.node.setScale(this._baseScale.clone());
+                }
+            }, BOSS_BEHAVIOR_STATS.exposeWindow);
+        }, BOSS_BEHAVIOR_STATS.exposeTelegraph);
+    }
+
     /** 解除急冻定身：恢复移动并还原身体颜色 */
     private unfreeze(): void {
         this.isFrozen = false;
@@ -464,7 +678,7 @@ export class EnemyController extends Component {
         bg.layer = this.node.layer;
         bg.getComponent(UITransform) ?? bg.addComponent(UITransform);
         const bgG = bg.addComponent(Graphics);
-        bgG.fillColor = new Color(0, 0, 0, 170);
+        bgG.fillColor = Theme.enemy.hpBarBack;
         bgG.rect(-HP_BAR_WIDTH * 0.5, -HP_BAR_BACK_HEIGHT * 0.5, HP_BAR_WIDTH, HP_BAR_BACK_HEIGHT);
         bgG.fill();
 
@@ -474,7 +688,7 @@ export class EnemyController extends Component {
         fill.layer = this.node.layer;
         fill.getComponent(UITransform) ?? fill.addComponent(UITransform);
         const fillG = fill.addComponent(Graphics);
-        fillG.fillColor = new Color(70, 230, 90, 255);
+        fillG.fillColor = Theme.enemy.hpBarFill;
         fillG.rect(-HP_BAR_WIDTH * 0.5, -HP_BAR_FILL_HEIGHT * 0.5, HP_BAR_WIDTH, HP_BAR_FILL_HEIGHT);
         fillG.fill();
 
@@ -500,37 +714,130 @@ export class EnemyController extends Component {
 
     /** 🛡️ 铁甲怪专属：血条上方创建护盾层数指示点（纯代码生成，无需手动拖拽） */
     private createShieldPips(): void {
-        if (this.shieldCharges <= 0 || !this.node?.isValid || this._shieldPipsRoot?.isValid) {
+        if (this.shieldCharges <= 0) {
+            return;
+        }
+        this.ensureShieldPipsRoot();
+        this.redrawShieldPips(this.shieldCharges);
+    }
+
+    /** 惰性创建护盾弧根节点（铁甲怪出生 / Boss 首次举盾共用；幂等） */
+    private ensureShieldPipsRoot(): void {
+        if (this._shieldPipsRoot?.isValid || !this.node?.isValid) {
             return;
         }
         const root = new Node(`ShieldPips_${this.node.name}`);
         root.layer = this.node.layer;
         root.getComponent(UITransform) ?? root.addComponent(UITransform);
         this.node.addChild(root);
-        root.setPosition(0, SHIELD_PIP_OFFSET_Y, 0);
+        root.setPosition(0, 0, 0); // 环绕护盾弧以身体中心为圆心
         this._shieldPipsRoot = root;
-        this.redrawShieldPips();
     }
 
-    /** 按剩余护盾层数重绘指示点（以 0 为中心对称排布；层数归零整排隐藏） */
-    private redrawShieldPips(): void {
+    /** 按剩余护盾层数重绘环绕护盾弧（身体外圈上半圆均分；层数归零整圈隐藏）。
+     *  count 由调用方传入：铁甲怪格挡传 shieldCharges，Boss 坚盾传 _bulwarkLayers，共用一套视觉。 */
+    private redrawShieldPips(count: number): void {
         const root = this._shieldPipsRoot;
         if (!root?.isValid) {
             return;
         }
-        if (this.shieldCharges <= 0) {
+        if (count <= 0) {
             root.active = false;
             return;
         }
         root.active = true;
         const g = root.getComponent(Graphics) ?? root.addComponent(Graphics);
         g.clear();
-        g.fillColor = SHIELD_PIP_COLOR;
-        const n = this.shieldCharges;
+        g.lineWidth = 4.5;
+        g.strokeColor = SHIELD_PIP_COLOR;
+        const n = count;
+        const radius = ENEMY_BODY_RADIUS + 9;
+        const gap = 22 * Math.PI / 180;
+        const span = (Math.PI - gap * (n - 1)) / n; // 均分上半圆 180°
         for (let i = 0; i < n; i++) {
-            g.circle((i - (n - 1) / 2) * SHIELD_PIP_GAP, 0, SHIELD_PIP_RADIUS);
-            g.fill();
+            const a0 = i * (span + gap);
+            g.arc(0, 0, radius, a0, a0 + span, true);
+            g.stroke();
         }
+    }
+
+    /**
+     * 敌人美术叠层（幂等，纯代码零资源）：
+     * ① 落地投影：压扁暗椭圆（子节点 y 压缩实现），伪景深让敌人「立」在场地上；
+     * ② 深色轮廓描边 + 类型剪影：铁甲=胸前盾弧 / 突袭=左向尖角 / 史莱姆=顶部气泡 / Boss=冠刺。
+     */
+    private ensureEnemyArt(): void {
+        if (!this.node?.isValid || this.node.getChildByName('EnemyShadow')) {
+            return;
+        }
+        // ① 落地投影
+        const shadow = new Node('EnemyShadow');
+        shadow.layer = this.node.layer;
+        shadow.addComponent(UITransform);
+        const sg = shadow.addComponent(Graphics);
+        sg.fillColor = Theme.enemy.shadow;
+        sg.circle(0, 0, ENEMY_BODY_RADIUS * 0.95);
+        sg.fill();
+        shadow.setScale(1, 0.32, 1);
+        shadow.setPosition(0, -ENEMY_BODY_RADIUS * 1.18, 0);
+        this.node.addChild(shadow);
+
+        // ② 轮廓描边 + 类型剪影
+        const art = new Node('EnemyArt');
+        art.layer = this.node.layer;
+        art.addComponent(UITransform);
+        const g = art.addComponent(Graphics);
+        const R = ENEMY_BODY_RADIUS;
+        g.lineWidth = 3;
+        g.strokeColor = Theme.enemy.outline;
+        g.circle(0, 0, R);
+        g.stroke();
+        switch (this.enemyType) {
+            case EnemyType.Shield: {
+                // 盾弧：胸前一道厚弧
+                g.strokeColor = Theme.enemy.shieldPip;
+                g.lineWidth = 5;
+                g.arc(0, 0, R * 0.62, 20 * Math.PI / 180, 160 * Math.PI / 180, true);
+                g.stroke();
+                break;
+            }
+            case EnemyType.Speed: {
+                // 左向双尖角（突袭方向感）
+                g.lineWidth = 3.5;
+                g.strokeColor = Theme.enemy.mark;
+                g.moveTo(R * 0.55, R * 0.5);
+                g.lineTo(-R * 0.25, 0);
+                g.lineTo(R * 0.55, -R * 0.5);
+                g.stroke();
+                break;
+            }
+            case EnemyType.Slime: {
+                // 顶部两颗气泡（黏液质感）
+                g.fillColor = Theme.enemy.mark;
+                g.circle(-6, R * 0.72, 5);
+                g.fill();
+                g.circle(6, R * 0.9, 3);
+                g.fill();
+                break;
+            }
+            case EnemyType.Boss: {
+                // 冠刺：三连尖刺
+                g.lineWidth = 3.5;
+                g.strokeColor = Theme.enemy.mark;
+                g.moveTo(-R * 0.6, R * 0.55);
+                g.lineTo(-R * 0.35, R * 1.05);
+                g.lineTo(-R * 0.1, R * 0.62);
+                g.lineTo(R * 0.15, R * 1.15);
+                g.lineTo(R * 0.4, R * 0.6);
+                g.lineTo(R * 0.6, R * 0.95);
+                g.lineTo(R * 0.7, R * 0.5);
+                g.stroke();
+                break;
+            }
+            default:
+                break; // 普通怪：仅轮廓
+        }
+        this.node.addChild(art);
     }
 
     /** 死亡：注销 + 缩小淡出 + 销毁 */
@@ -556,6 +863,20 @@ export class EnemyController extends Component {
         this.unscheduleAllCallbacks();
         // 通知波次管理器：本敌已被击杀（用于波次结算）
         EventBus.emit(GameEvents.ENEMY_KILLED, this);
+        // 💰 亲卫死亡奖励（Boss 君王诏令置位 goldOnDeath）：把压力转成经济机会，鼓励应对而非逃避
+        if (this.goldOnDeath > 0 && this.node?.isValid) {
+            GoldManager.instance?.addGold(this.goldOnDeath);
+            FloatingTextManager.instance?.showText(
+                `+${this.goldOnDeath} 💰`,
+                new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
+                Theme.ui.gold,
+            );
+        }
+        // ★ 死亡爆浆：体色碎片向下抛洒
+        const stats = ENEMY_TYPE_STATS[this.enemyType];
+        if (stats) {
+            FxManager.gibs(this.node.worldPosition, rgb(stats.color.r, stats.color.g, stats.color.b), 7);
+        }
         if (this._hpBarRoot?.isValid) {
             this._hpBarRoot.active = false;
         }

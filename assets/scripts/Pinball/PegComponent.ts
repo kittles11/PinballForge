@@ -1,9 +1,12 @@
 import {
-    _decorator, Component, Enum, Color, Sprite, Collider2D, Vec3, tween, Tween, find,
+    _decorator, Component, Enum, Color, Graphics, Node, Sprite, Collider2D, UITransform,
+    Vec3, tween, Tween, find,
 } from 'cc';
 import { PegType } from '../Core/DataModels';
 import { CameraShake } from '../Core/CameraShake';
 import { RelicManager } from '../Core/RelicManager';
+import { cloneColor, EASE_POP, EASE_PUNCH, SQUASH_SCALE_X, SQUASH_SCALE_Y, Theme } from '../Core/ArtTheme';
+import { FxManager } from '../Core/FxManager';
 
 const { ccclass, property } = _decorator;
 
@@ -15,12 +18,12 @@ Enum(PegType);
 /** 炸药钉爆炸半径下限（px）：默认 120；铺满屏幕后由 PegBoardManager 按实际间距注入更大的值 */
 export const BOMB_RADIUS = 120;
 
-/** 各类型钉子的初始主题色（编辑器未配颜色时兜底使用；Bomb 炽红 / Refresh 翠绿） */
+/** 各类型钉子的初始主题色（编辑器未配颜色时兜底使用）：色值统一取自 ArtTheme 语义色板 */
 const PEG_TYPE_COLORS: Record<PegType, Color> = {
-    [PegType.Normal]: new Color(255, 255, 255, 255),      // 白 / 木色
-    [PegType.Multiplier]: new Color(255, 215, 0, 255),    // 金黄
-    [PegType.Bomb]: new Color(255, 40, 40, 255),          // 炸药红 #FF2828
-    [PegType.Refresh]: new Color(50, 230, 100, 255),      // 刷新翠绿 #32E664
+    [PegType.Normal]: Theme.peg.normal,
+    [PegType.Multiplier]: Theme.peg.multiplier,
+    [PegType.Bomb]: Theme.peg.bomb,
+    [PegType.Refresh]: Theme.peg.refresh,
 };
 
 /**
@@ -40,13 +43,13 @@ export class PegComponent extends Component {
     @property
     maxHitsPerRound = 3;
 
-    /** 受击激活时的高亮颜色（普通钉浅绿，乘倍钉金黄） */
+    /** 受击激活时的高亮颜色（普通钉浅绿，乘倍钉金黄）；克隆持有，可被 upgradeToMultiplier 安全改写 */
     @property(Color)
-    hitColor: Color = new Color(144, 238, 144, 255);
+    hitColor: Color = cloneColor(Theme.peg.hit);
 
     /** 受击达到上限变暗的颜色（灰色） */
     @property(Color)
-    disabledColor: Color = new Color(153, 153, 153, 255);
+    disabledColor: Color = cloneColor(Theme.peg.exhaust);
 
     /** 当前被撞击次数 */
     get currentHitCount(): number {
@@ -70,10 +73,14 @@ export class PegComponent extends Component {
 
     private _sprite: Sprite | null = null;
     private _collider: Collider2D | null = null;
-    /** 初始 Sprite 颜色（默认白色），resetPeg 时恢复 */
-    private _defaultColor: Color = new Color(255, 255, 255, 255);
+    /** 初始 Sprite 颜色（类型主题色），resetPeg 时恢复 */
+    private _defaultColor: Color = cloneColor(Theme.peg.normal);
     /** 初始缩放，作为弹性动画的基准 */
     private _baseScale: Vec3 = new Vec3(1, 1, 1);
+    /** 钉子绘制半径（UITransform 半宽，兜底 16） */
+    private _radius = 16;
+    /** 类型纹样 + 受击计量环的绘制层（子节点 PegArt，状态变化时整体重绘） */
+    private _art: Graphics | null = null;
 
     protected onLoad(): void {
         this._sprite = this.getComponent(Sprite);
@@ -89,6 +96,10 @@ export class PegComponent extends Component {
             this._sprite.color = this._defaultColor;
         }
         this._baseScale.set(this.node.scale);
+        // 钉子半径（计量环 / 类型纹样的绘制基准）：取 UITransform 半宽，兜底 16
+        const size = this.node.getComponent(UITransform)?.contentSize;
+        this._radius = size && size.width > 0 ? size.width / 2 : 16;
+        this.redrawArt();
     }
 
     protected onDestroy(): void {
@@ -125,21 +136,28 @@ export class PegComponent extends Component {
 
         // 副球（雷球分裂的左右弹，skipAnim=true）不播放弹性缩放动画：只累加能量/计数，
         // 靠主球统一反馈动画，削减高频碰撞下的 Tween 实例开销。
+        // 类型纹样 / 计量环随受击即时重绘（副球 skipAnim 也计数，同样重绘）
+        this.redrawArt();
+
         if (!skipAnim) {
-            // 打断上一次未完成的动画，避免叠加
+            // 打断上一次未完成的动画，避免叠加；squash & stretch：X 撑 Y 压 + backOut 过冲回弹
             Tween.stopAllByTarget(node);
-            const big = this._baseScale.clone().multiplyScalar(1.3);
+            const big = new Vec3(
+                this._baseScale.x * SQUASH_SCALE_X,
+                this._baseScale.y * SQUASH_SCALE_Y,
+                this._baseScale.z,
+            );
             tween(node)
-                .to(0.08, { scale: big })
-                .to(0.1, { scale: this._baseScale.clone() })
+                .to(0.08, { scale: big }, { easing: EASE_PUNCH })
+                .to(0.12, { scale: this._baseScale.clone() }, { easing: EASE_POP })
                 .start();
         }
 
         // 炸药钉：一次性命中，引爆周围 BOMB_RADIUS 内钉子后自身力竭
         if (this.pegType === PegType.Bomb) {
-            this.triggerBombExplosion(visited);    // 鍐呴儴缁?_isExploding 瀹堝崼闃茶繖
-            this.exhaust();                 // 立即力竭变灰，防止被二次引爆
-            return;                         // 不走受击高亮，避免炸后闪成与自身炽红无关的浅绿
+            this.triggerBombExplosion(visited); // 内部 _isExploding 守卫防连锁重复引爆
+            this.exhaust();                     // 立即力竭变灰，防止被二次引爆
+            return;                             // 不走受击高亮，避免炸后闪成与自身炽红无关的浅绿
         }
 
         // 刷新钉：复活全场除自身外的其它钉子；自身照常累计受击，打满 maxHitsPerRound 才力竭
@@ -172,13 +190,12 @@ export class PegComponent extends Component {
         Tween.stopAllByTarget(node);
 
         const big = this._baseScale.clone().multiplyScalar(1.6);
-        const lavaColor = new Color(255, 51, 0, 255); // 鲜亮红橙 #FF3300
         if (this._sprite?.isValid) {
-            this._sprite.color = lavaColor;
+            this._sprite.color = Theme.peg.lavaSplash; // 鲜亮红橙 #FF3300
         }
         tween(node)
-            .to(0.06, { scale: big })
-            .to(0.18, { scale: this._baseScale.clone() })
+            .to(0.06, { scale: big }, { easing: EASE_PUNCH })
+            .to(0.18, { scale: this._baseScale.clone() }, { easing: EASE_POP })
             .call(() => {
                 // 复原颜色：已力竭 → 保持灰色；未力竭 → 保持受击高亮色 hitColor
                 // （修复旧逻辑：lavaHit 动画结束后一律复原为初始白，导致受击高亮被错误清除）
@@ -207,11 +224,13 @@ export class PegComponent extends Component {
         const myPos = this.node.worldPosition;
         // 高能烈药被动：持有该遗物时爆炸半径强制扩大到 HIGH_EXPLOSIVE_RADIUS（否则维持原半径）
         const radius = RelicManager.effectiveBombRadius(this.explosionRadius);
+        // ★ 命中特效：白闪 + 冲击环 + 火星迸溅 + 烟团（旧实现爆炸零视觉，只震屏）
+        FxManager.blast(myPos, Theme.peg.bomb, radius);
         for (const other of allPegs) {
             if (other === this || !other?.node?.isValid || other.isExhausted) continue;
             const dist = Vec3.distance(myPos, other.node.worldPosition);
             if (dist <= radius) {
-                other.onHit(false, visited); // 杩炲甫寮曠偢骞剁粨绠楀彈鍑?
+                other.onHit(false, visited); // 连带引爆并结算受击
             }
         }
 
@@ -227,6 +246,7 @@ export class PegComponent extends Component {
         if (this._collider?.isValid) {
             this._collider.enabled = false;
         }
+        this.redrawArt(); // 计量环全段熄灭
     }
 
     /**
@@ -257,6 +277,7 @@ export class PegComponent extends Component {
 
         Tween.stopAllByTarget(this.node);
         this.node.setScale(this._baseScale);
+        this.redrawArt();
     }
 
     /**
@@ -277,6 +298,7 @@ export class PegComponent extends Component {
         if (this._sprite?.isValid) {
             this._sprite.color = this._defaultColor;
         }
+        this.redrawArt();
 
         // 力竭中的钉子改类型后立即重置，避免新类型仍处于禁用碰撞的灰化状态
         if (this._isExhausted) {
@@ -294,15 +316,111 @@ export class PegComponent extends Component {
             return;
         }
         this.pegType = PegType.Multiplier;
-        const gold = new Color(255, 215, 0, 255);
+        const gold = cloneColor(Theme.peg.multiplier);
         this.hitColor.set(gold);
         this._defaultColor.set(gold);
         if (this._sprite?.isValid) {
             this._sprite.color = gold;
         }
+        this.redrawArt();
         // 力竭中的钉子强化后立即恢复可受击（重置为金黄并启用碰撞器）
         if (this._isExhausted) {
             this.resetPeg();
+        }
+    }
+
+    /** 取（幂等创建）PegArt 绘制层：子节点承载类型纹样与受击计量环 */
+    private ensureArt(): Graphics | null {
+        if (this._art?.isValid) {
+            return this._art;
+        }
+        if (!this.node?.isValid) {
+            return null;
+        }
+        let child = this.node.getChildByName('PegArt');
+        if (!child?.isValid) {
+            child = new Node('PegArt');
+            child.layer = this.node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
+            child.addComponent(UITransform);
+            child.setParent(this.node);
+        }
+        this._art = child.getComponent(Graphics) ?? child.addComponent(Graphics);
+        return this._art;
+    }
+
+    /**
+     * 重绘钉子美术层（状态变化时整体重绘，零逐帧开销）：
+     * ① 受击计量环：maxHitsPerRound 段弧，随受击逐段熄灭（与音效音高爬升对齐的进度反馈）；
+     * ② 类型形状分化：普通=圆（仅计量环）/ 乘倍=六角 / 炸药=引信火花 / 刷新=内环四刻度。
+     */
+    private redrawArt(): void {
+        const g = this.ensureArt();
+        if (!g?.isValid) {
+            return;
+        }
+        g.clear();
+        const c = PEG_TYPE_COLORS[this.pegType] ?? Theme.peg.normal;
+        const r = this._radius;
+
+        // ① 受击计量环：段弧从正上方开始顺时针排布，已受击段熄灭
+        const segs = Math.max(1, Math.round(this.maxHitsPerRound));
+        const gap = 0.24; // 弧段间隙（弧度）
+        const span = (Math.PI * 2) / segs;
+        g.lineWidth = 3;
+        for (let i = 0; i < segs; i++) {
+            const spent = i < this._currentHitCount;
+            const a0 = -Math.PI / 2 + i * span + gap / 2;
+            g.strokeColor = spent ? Theme.peg.ringOff : c;
+            g.arc(0, 0, r + 7, a0, a0 + span - gap, false);
+            g.stroke();
+        }
+
+        // ② 类型纹样分化
+        switch (this.pegType) {
+            case PegType.Multiplier: {
+                // 六角描边（乘倍钉的「晶体感」）
+                g.lineWidth = 2.5;
+                g.strokeColor = c;
+                const rr = r - 4;
+                for (let k = 0; k < 6; k++) {
+                    const a = (Math.PI / 3) * k - Math.PI / 2;
+                    const x = rr * Math.cos(a);
+                    const y = rr * Math.sin(a);
+                    if (k === 0) {
+                        g.moveTo(x, y);
+                    } else {
+                        g.lineTo(x, y);
+                    }
+                }
+                g.close();
+                g.stroke();
+                break;
+            }
+            case PegType.Bomb: {
+                // 引信：顶部短线 + 火花点
+                g.lineWidth = 2.5;
+                g.strokeColor = c;
+                g.moveTo(0, r - 2);
+                g.lineTo(0, r + 8);
+                g.stroke();
+                g.fillColor = Theme.fx.ember;
+                g.circle(0, r + 10, 3);
+                g.fill();
+                break;
+            }
+            case PegType.Refresh: {
+                // 内环四段刻度（表盘感 = 周期刷新）
+                g.lineWidth = 2.5;
+                g.strokeColor = c;
+                for (let k = 0; k < 4; k++) {
+                    const a0 = (Math.PI / 2) * k - Math.PI / 2 + 0.2;
+                    g.arc(0, 0, r - 5, a0, a0 + (Math.PI / 2) - 0.4, false);
+                    g.stroke();
+                }
+                break;
+            }
+            default:
+                break; // 普通钉：仅计量环，保持素净
         }
     }
 

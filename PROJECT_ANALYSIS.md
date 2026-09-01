@@ -5,6 +5,14 @@
 > 分析日期：2026-08-27。本文档为只读代码分析结果。本次未修改任何 `.ts`、`.scene`、`.prefab`、`.meta` 或配置文件。
 >
 > 证据原则：以下结论来自实际读取的源代码和 Cocos 序列化数据。无法由当前文件确认的内容明确写为“无法从当前代码确认”。
+>
+> **⚠️ 勘误（自检复核时点）——以下“未完成/潜在问题”已被修复，且全部纳入自检覆盖，请勿再按旧结论行动：**
+> 1. §10/§11 三张占位卡牌：`lightning_rage`（splitCount 数据驱动 5 连发）、`lava_core`（`applyLavaSplash` 真实溅射）、`lightning_combo`（8 连击 `takeFreeDamage` 追发）均已接线生效。覆盖：`selfcheck-lightning-rage.ts`、`selfcheck-card-effects.ts`（文案↔实现一致性 21 项）。
+> 2. §11-P2-1 音频打包 404：`AudioManager.init` 已改经 `resources.load('audio/ding', AudioClip)` 取构建后真实 URL（`assets/resources.meta` 已配 bundle），旧路径仅作预览兜底。覆盖：`selfcheck-onboarding-p0.ts` ⑤。
+> 3. 本文档分析时点后的代码演进：脚本已达 45 个（新增 MetaManager/DailyTaskManager/TutorialManager/ArtTheme/FxManager/Analytics/OpsBridge/MusicManager 等）、敌人 5 类型混合池、卡牌稀有度加权抽三、根目录 20 个 selfcheck 脚本（统一 `node --experimental-transform-types --import ./register-ts-hook.mjs selfcheck-xxx.ts` 运行，全绿）。
+> 4. 音频补全：`Core/MusicManager.ts` 程序化 BGM（96 BPM Am-F-C-G、A/B 双乐句、Boss 打击层、胜/负 stinger、模态 ducking），零素材零 Inspector，覆盖自检 `selfcheck-music.ts`；数值敏感性工具 `tools/balance-double-halve.ts` + 报告 `docs/BALANCE_SENSITIVITY.md`。
+> 5. 遗物系统（P2-3）：修复**传奇藏宝箱空池软锁**（5 件收齐后第 5/10 关宝箱无可点卡 → 波次卡死，现回退常规三选一）；`MAX_RELICS` 显式上限 + `addRelic` 满池守卫；获得弹入跳字反馈、瓷片点击复习被动全文、占位展示 0/5。覆盖自检 `selfcheck-relics.ts`。另：`hit.wav` 实际被 MainScene/Orb/Peg 的 AudioSource 引用（本文档 §2/§10「未统一」记载已过时，勿删）；双扩展名 Prefab（LavaOrb/LightningOrb）已被删除，prefab 清单现为干净的 Enemy/Orb/Peg。
+> 6. Boss 特色行为（P2-1，设计稿 `docs/BOSS_DESIGN.md`）：章节轮换 C 破绽时刻（受击×2 窗口）/ B 君王诏令（召唤亲卫抢炮塔仇恨、死亡掉金）/ A 破阵坚盾（盾期炮伤×0.5，重炮剥 1 层/熔岩剥 2 层），第 1 章仅狂暴回复；`FIRE_TURRET` 载荷补可选 `funnelType`（倍率仍在发射端唯一乘入点）。覆盖自检 `selfcheck-boss-behaviors.ts`，全套 21 个自检脚本全绿。
 
 ## 1. 项目基本信息
 

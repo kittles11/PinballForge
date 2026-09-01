@@ -1,8 +1,10 @@
 import {
-    _decorator, Component, Node, Label, Graphics, UITransform, Color,
+    _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3, tween,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
-import { RelicType, RELIC_DATABASE } from '../Core/DataModels';
+import { RelicType, RELIC_DATABASE, ALL_RELIC_TYPES } from '../Core/DataModels';
+import { FloatingTextManager } from '../Core/FloatingTextManager';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass } = _decorator;
 
@@ -12,20 +14,28 @@ const TILE_HEIGHT = 40;
 /** 瓷片间距（px） */
 const TILE_GAP = 8;
 /** 瓷片底色：半透明暗金（与金币主题呼应） */
-const TILE_BG = new Color(46, 40, 16, 200);
+const TILE_BG = Theme.ui.tileGoldBg;
 /** 瓷片边框色：亮金 */
-const TILE_BORDER = new Color(255, 216, 120, 255);
+const TILE_BORDER = Theme.ui.gold;
 
 /**
  * 顶部 UI 遗物栏（RelicBarController）：挂在 Canvas/UILayer/RelicBar 节点（由 RelicManager 自举创建）。
  * - 监听 RELIC_CHANGED 实时渲染已获得的遗物 Emoji 徽章列表，一字横排居中；
  * - 初始渲染同样由 RELIC_CHANGED 驱动（RelicManager.ensureMounted 挂载后广播一次当前集合），
  *   本类不再 import RelicManager，与其保持单向依赖（管理器 → 视图），杜绝循环引用。
+ *
+ * P2 遗物可读性（game-design：玩家必须能从界面确认规则，而非靠读代码）：
+ *  - 占位文案展示「0/5」上限（上限唯一真源 = ALL_RELIC_TYPES 表长）；
+ *  - 监听 RELIC_ACQUIRED：新瓷片弹入动画 + 跳字「获得 图标 名称」（addRelic 先 emit
+ *    ACQUIRED 再 emit CHANGED，故重建完成后消费高亮标记，时序天然正确）；
+ *  - 点击瓷片：跳字展示该遗物被动效果全文（玩家随时可复习规则）。
  */
 @ccclass('RelicBar')
 export class RelicBarController extends Component {
     /** 最近一次 RELIC_CHANGED 广播的遗物集合：start 初始渲染用（数据完全由事件驱动，不回查管理器） */
     private _lastTypes: RelicType[] = [];
+    /** 刚获得的遗物（RELIC_ACQUIRED 置位，rebuild 完成后消费：弹入 + 跳字） */
+    private _pendingHighlight: RelicType | null = null;
 
     protected onLoad(): void {
         // 场景历史遗留：RelicBar 节点上序列化出数十个重复 RelicBarController 实例。
@@ -36,6 +46,7 @@ export class RelicBarController extends Component {
             return;
         }
         EventBus.on(GameEvents.RELIC_CHANGED, this.onRelicChanged, this);
+        EventBus.on(GameEvents.RELIC_ACQUIRED, this.onRelicAcquired, this);
     }
 
     protected start(): void {
@@ -44,12 +55,18 @@ export class RelicBarController extends Component {
 
     protected onDestroy(): void {
         EventBus.off(GameEvents.RELIC_CHANGED, this.onRelicChanged, this);
+        EventBus.off(GameEvents.RELIC_ACQUIRED, this.onRelicAcquired, this);
     }
 
     /** 遗物集合变化：缓存最新集合 + 整栏重建（数量上限 5，代价可忽略） */
     private onRelicChanged(types: RelicType[]): void {
         this._lastTypes = types;
         this.rebuild(types);
+    }
+
+    /** 获得新遗物：置高亮标记（addRelic 随后广播 RELIC_CHANGED 触发重建，重建尾部消费） */
+    private onRelicAcquired(type: RelicType): void {
+        this._pendingHighlight = type;
     }
 
     private rebuild(types: RelicType[]): void {
@@ -67,6 +84,7 @@ export class RelicBarController extends Component {
 
         if (types.length === 0) {
             this.addPlaceholder();
+            this._pendingHighlight = null; // 占位态无瓷片可高亮（防御：理论上不会收到 ACQUIRED 后仍空池）
             return;
         }
 
@@ -78,22 +96,51 @@ export class RelicBarController extends Component {
             tile.setPosition(startX + i * (TILE_WIDTH + TILE_GAP), 0, 0);
             this.node.addChild(tile);
         }
+        this.highlightNewlyAcquired();
     }
 
-    /** 未获得遗物时的占位提示 */
+    /** 新获得瓷片弹入（0.2→1.25→1 回弹）+ 跳字「🧿 获得 图标 名称」；消费后清标记 */
+    private highlightNewlyAcquired(): void {
+        const type = this._pendingHighlight;
+        if (type === null || type === undefined) {
+            return;
+        }
+        this._pendingHighlight = null;
+        const info = RELIC_DATABASE[type];
+        if (!info) {
+            return;
+        }
+        for (const child of this.node.children) {
+            if (child.name === `${info.icon}${info.name}`) {
+                child.setScale(0.2, 0.2, 1);
+                tween(child)
+                    .to(0.12, { scale: new Vec3(1.25, 1.25, 1) })
+                    .to(0.08, { scale: new Vec3(1, 1, 1) })
+                    .start();
+                FloatingTextManager.instance?.showText(
+                    `🧿 获得 ${info.icon} ${info.name}`, child.worldPosition, Theme.ui.gold, true,
+                );
+                return;
+            }
+        }
+    }
+
+    /** 未获得遗物时的占位提示（展示上限规则：0/5） */
     private addPlaceholder(): void {
-        const label = this.makeLabel('🧿 遗物：暂无');
-        label.color = new Color(255, 255, 255, 120);
+        const label = this.makeLabel(`🧿 遗物 0/${ALL_RELIC_TYPES.length}`);
+        label.color = Theme.ui.whiteGhost;
         label.fontSize = 20;
         this.node.addChild(label.node);
     }
 
-    /** 创建单个遗物瓷片：半透明暗金圆角底板（亮金描边）+ 图标 + 名称 */
+    /** 创建单个遗物瓷片：半透明暗金圆角底板（亮金描边）+ 图标 + 名称；点击复习被动全文 */
     private createTile(type: RelicType): Node {
         const info = RELIC_DATABASE[type];
         const tile = new Node(`${info.icon}${info.name}`);
         tile.layer = this.node.layer;
-        tile.getComponent(UITransform) ?? tile.addComponent(UITransform);
+        const tf = tile.getComponent(UITransform) ?? tile.addComponent(UITransform);
+        // 显式尺寸：触摸命中区与视觉底板一致（默认 100×100 会超出瓷片误触）
+        tf.setContentSize(TILE_WIDTH, TILE_HEIGHT);
 
         const g = tile.addComponent(Graphics);
         g.fillColor = TILE_BG;
@@ -108,6 +155,13 @@ export class RelicBarController extends Component {
         label.fontSize = 20;
         label.color = Color.WHITE;
         tile.addChild(label.node);
+
+        // 点击瓷片：跳字展示被动效果描述（tile 随 rebuild 销毁，监听随节点自然回收）
+        tile.on(Node.EventType.TOUCH_END, () => {
+            FloatingTextManager.instance?.showText(
+                `${info.icon} ${info.desc}`, tile.worldPosition, Theme.ui.gold,
+            );
+        }, this);
         return tile;
     }
 

@@ -13,6 +13,7 @@ import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, RELIC_INFO, ALL_RELIC_TYPES } from '../Core/RelicManager';
 import { GoldManager } from '../Core/GoldManager';
 import { Analytics } from '../Core/Analytics';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass, property } = _decorator;
 
@@ -112,8 +113,11 @@ export class RewardDialog extends Component {
         OrbController.recycleAllOrbs();
         // 本关最后一波（currentWave >= maxWaves）才判定精英/Boss 宝箱；中途波次照常 3 选 1
         const levelCleared = LevelManager.currentWave >= WAVES_PER_LEVEL;
-        // ☆ 第 5 / 10 关为精英关 / Boss关，通关后开启【传奇藏宝箱】：从未拥有遗物里随机 2 件免费二选一
-        if (levelCleared && (LevelManager.currentLevel === 5 || LevelManager.currentLevel === 10)) {
+        // ☆ 第 5 / 10 关为精英关 / Boss关，通关后开启【传奇藏宝箱】：从未拥有遗物里随机 2 件免费二选一。
+        //   ★ 软锁修复：5 件遗物收集齐后（第 3 章起必然到达）unowned 为空 → 两张卡全隐藏 →
+        //     弹窗无可点目标、REWARD_SELECTED 永不发出、游戏卡死。空池时回退常规卡牌三选一。
+        const unownedCount = ALL_RELIC_TYPES.filter((t) => !RelicManager.hasRelic(t)).length;
+        if (levelCleared && (LevelManager.currentLevel === 5 || LevelManager.currentLevel === 10) && unownedCount > 0) {
             this.showRelicChest();
             return;
         }
@@ -203,7 +207,7 @@ export class RewardDialog extends Component {
         tf.setContentSize(520, 130);
         const g = card.getComponent(Graphics) ?? card.addComponent(Graphics);
         g.clear();
-        g.fillColor = new Color(30, 34, 48, 255); // #1E2230 深暗底色
+        g.fillColor = Theme.ui.panelOpaque; // #1E2230 深暗底色
         g.roundRect(-260, -65, 520, 130, 14);
         g.fill();
     }
@@ -237,7 +241,7 @@ export class RewardDialog extends Component {
         tf.setContentSize(520, 130);
         const g = card.getComponent(Graphics) ?? card.addComponent(Graphics);
         g.clear();
-        g.fillColor = new Color(40, 30, 12, 255); // 藏宝箱金褐底色
+        g.fillColor = Theme.ui.treasureBg; // 藏宝箱金褐底色
         g.roundRect(-260, -65, 520, 130, 14);
         g.fill();
     }

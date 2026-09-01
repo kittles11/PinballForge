@@ -1,11 +1,14 @@
 import {
     _decorator, Component, Node, Vec3, Color, Graphics, UITransform, Layers,
-    tween, Tween, find,
+    MotionStreak, Sprite, tween, Tween, find,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { EnemyManager } from './EnemyManager';
 import { EnemyController } from './EnemyController';
-import { OrbType } from '../Core/DataModels';
+import { OrbType, FunnelType } from '../Core/DataModels';
+import { orbTrailColor, Theme } from '../Core/ArtTheme';
+import { RuntimeTex } from '../Core/RuntimeTex';
+import { FxManager } from '../Core/FxManager';
 
 const { ccclass, property } = _decorator;
 
@@ -40,6 +43,37 @@ export class TurretController extends Component {
     protected onLoad(): void {
         // 缓存固定原点：后坐力往返都以它为基准，杜绝「动画中途被打断 → 起点漂移」的累积误差
         this._originPos.set(this.node.position);
+        this.drawTurret();
+    }
+
+    /**
+     * 纯代码绘制炮塔外观：场景旧贴图（57520716-…，改版前的灰绿底色方块）已从工程删除，
+     * 残留 Sprite 引用会渲染成「资源缺失」占位图案；本工程美术全走 Graphics 矢量绘制
+     * （零图片资产），炮台改为代码绘制，与 DailyTaskBadge.buildUI 同款范式。
+     */
+    private drawTurret(): void {
+        const g = this.getComponent(Graphics) ?? this.node.addComponent(Graphics);
+        g.clear();
+        // 炮管（朝上，先画，根部由底座覆盖）
+        g.fillColor = Theme.machine.body;
+        g.roundRect(-7, -4, 14, 34, 6);
+        g.fill();
+        g.lineWidth = 2;
+        g.strokeColor = Theme.machine.edge;
+        g.roundRect(-7, -4, 14, 34, 6);
+        g.stroke();
+        // 圆形底座：深灰板体 + 青蓝描边（与导流板 / 蹦床同族机关配色）
+        g.fillColor = Theme.machine.body;
+        g.circle(0, 0, 24);
+        g.fill();
+        g.lineWidth = 3;
+        g.strokeColor = Theme.machine.edge;
+        g.circle(0, 0, 24);
+        g.stroke();
+        // 中枢亮点
+        g.fillColor = Theme.machine.edge;
+        g.circle(0, 0, 7);
+        g.fill();
     }
 
     protected start(): void {
@@ -56,8 +90,10 @@ export class TurretController extends Component {
     }
 
     /** 开火事件回调：后坐力动画 + 珠子类型特效子弹极速飞向最靠前的敌人 */
-    private onFire(data: { damage: number; orbType: OrbType }): void {
+    private onFire(data: { damage: number; orbType: OrbType; funnelType?: FunnelType }): void {
         this.playRecoil();
+        // ★ 枪口焰：开火瞬间一小团暖白闪
+        FxManager.muzzle(this.node.worldPosition);
         this.launchBullet(this.resolveTarget(), data);
     }
 
@@ -72,7 +108,7 @@ export class TurretController extends Component {
     }
 
     /** 生成对应颜色的子弹并以固定 0.12s 极速飞向目标终点；无敌人时打向屏幕右侧边框 */
-    private launchBullet(target: EnemyController | null, data: { damage: number; orbType: OrbType }): void {
+    private launchBullet(target: EnemyController | null, data: { damage: number; orbType: OrbType; funnelType?: FunnelType }): void {
         const host = this.node.parent; // BattleLayer：子弹与敌人同坐标系
         if (!host?.isValid || !this.node.isValid) {
             return;
@@ -105,7 +141,10 @@ export class TurretController extends Component {
                 // ★ 命中发射瞬间锁定的目标，飞行中不再重查敌人列表——
                 //   修复「隔空打怪」：旧逻辑到达时重新 resolveTarget，可能命中与瞄准不同的另一只敌人
                 if (target?.node?.isValid && !target.isDead) {
-                    target.takeDamage(data.damage, data.orbType);
+                    // funnelType 透传：Boss「破阵坚盾」按入槽漏斗做剥盾判定（普通怪无感）
+                    target.takeDamage(data.damage, data.orbType, false, data.funnelType ?? null);
+                    // ★ 命中火花：跟随珠子类型色
+                    FxManager.spark(target.node.worldPosition, orbTrailColor(data.orbType), 3);
                 }
             })
             .start();
@@ -125,22 +164,53 @@ export class TurretController extends Component {
         let color: Color;
         let radius: number;
         if (orbType === OrbType.Lightning) {
-            color = new Color(0x00, 0xff, 0xff, 0xff); // #00FFFF 雷球电光
+            color = Theme.orb.lightning; // #00FFFF 雷球电光
             radius = 12;
         } else if (orbType === OrbType.Frost) {
-            color = new Color(0xE0, 0xF7, 0xFA, 0xff); // #E0F7FA 霜冻淡冰蓝
+            color = Theme.orb.frost; // #E0F7FA 霜冻淡冰蓝
             radius = 12;
         } else if (orbType === OrbType.Lava) {
-            color = new Color(0xff, 0x44, 0x00, 0xff); // #FF4400 熔岩火红大弹
+            color = Theme.orb.lava; // #FF4400 熔岩火红大弹
             radius = 16;
         } else {
-            color = new Color(0xff, 0xff, 0xff, 0xff); // #FFFFFF 普通银白
+            color = Theme.orb.normal; // #FFFFFF 普通银白
             radius = 10;
         }
 
         g.fillColor = color;
         g.circle(0, 0, radius);
         g.fill();
+
+        // ★ 柔光弹体：glow 纹理叠层（加法混合），硬边实心圆 → 辉光弹
+        const glowSF = RuntimeTex.glow();
+        if (glowSF) {
+            const glow = new Node('BulletGlow');
+            glow.layer = n.layer;
+            const xt = glow.addComponent(UITransform);
+            xt.setContentSize(radius * 3.2, radius * 3.2);
+            const sp = glow.addComponent(Sprite);
+            sp.spriteFrame = glowSF;
+            sp.sizeMode = Sprite.SizeMode.CUSTOM;
+            sp.trim = false;
+            sp.color = color;
+            const mat = RuntimeTex.additiveMaterial();
+            if (mat) {
+                sp.customMaterial = mat;
+            }
+            n.addChild(glow);
+        }
+
+        // ★ 弹道拖尾：短淡出 MotionStreak（0.12s 飞行中拉出光迹，替代原瞬移实心圆点）
+        const streakTex = RuntimeTex.streakTexture();
+        if (streakTex) {
+            const streak = n.addComponent(MotionStreak);
+            streak.texture = streakTex;
+            streak.fadeTime = 0.1;
+            streak.minSeg = 3;
+            streak.stroke = radius * 1.2;
+            streak.fastMode = false;
+            streak.color = color;
+        }
         return n;
     }
 

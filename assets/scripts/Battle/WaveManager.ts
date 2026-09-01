@@ -12,6 +12,7 @@ import { RelicManager, CROWN_GOLD_AMOUNT, CROWN_SHIELD_AMOUNT } from '../Core/Re
 import { OrbController } from '../Pinball/OrbController';
 import { GoldManager } from '../Core/GoldManager';
 import { CastleController } from './CastleController';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass, property } = _decorator;
 
@@ -178,16 +179,49 @@ export class WaveManager extends Component {
         console.log(`[Wave] 生成 ${stats.icon} ${type}：HP ${ec.maxHp} / 移速 ${ec.moveSpeed} / 攻城 ${ec.attackDamage}`);
     }
 
-    /** 🦠 史莱姆分裂：母体死亡处同步生成小怪，并把本波总数 +count（先扩容再计杀，防止波次提前结算） */
-    private onEnemySplit(payload: { x: number; y: number; count: number; hp: number; speed: number }): void {
+    /** 🦠 史莱姆分裂 / 👑 Boss 君王诏令：母体死亡处或 Boss 身前同步生成小怪，并把本波总数 +count（先扩容再计杀，防止波次提前结算） */
+    private onEnemySplit(payload: { x: number; y: number; count: number; hp: number; speed: number; summon?: boolean; goldDrop?: number; spawnType?: EnemyType }): void {
         if (this._gameOver) {
             return;
         }
         this.waveTotalEnemies += payload.count;
         for (let i = 0; i < payload.count; i++) {
-            this.spawnMiniSlime(payload, i);
+            if (payload.summon) {
+                this.spawnBossGuard(payload, i);
+            } else {
+                this.spawnMiniSlime(payload, i);
+            }
         }
-        console.log(`[Wave] 🦠 史莱姆分裂 +${payload.count}，本波总数增至 ${this.waveTotalEnemies}`);
+        console.log(payload.summon
+            ? `[Wave] 👑 君王诏令 +${payload.count}，本波总数增至 ${this.waveTotalEnemies}`
+            : `[Wave] 🦠 史莱姆分裂 +${payload.count}，本波总数增至 ${this.waveTotalEnemies}`);
+    }
+
+    /**
+     * 👑 Boss 亲卫（君王诏令）：Normal 模板 + 显式血量（payload.hp 已由 EnemyController 按
+     * 章节曲线 summonHpRatioForChapter 算好，此处不再乘小怪比例），上下错开生成，死亡掉金币。
+     */
+    private spawnBossGuard(payload: { x: number; y: number; hp: number; speed: number; goldDrop?: number; spawnType?: EnemyType }, index: number): void {
+        const enemy = this.createEnemyNode();
+        if (!enemy?.isValid) {
+            return;
+        }
+        const ec = enemy.getComponent(EnemyController);
+        if (!ec) {
+            enemy.destroy();
+            return;
+        }
+        ec.setupType(payload.spawnType ?? EnemyType.Normal, true); // isMini：亲卫不参与分裂/护盾等母体逻辑
+        ec.maxHp = Math.max(1, Math.round(payload.hp));
+        ec.currentHp = ec.maxHp;
+        ec.moveSpeed = payload.speed;
+        ec.attackDamage = Math.max(1, Math.round(WAVE_BASE_ATTACK_DAMAGE * ENEMY_TYPE_STATS[EnemyType.Normal].attackDamageMult));
+        ec.goldOnDeath = payload.goldDrop ?? 0;
+        enemy.setScale(1, 1, 1);
+        // 召唤点上下错开，避免完全重叠
+        enemy.setPosition(payload.x, payload.y + (index === 0 ? 24 : -24), 0);
+        enemy.setParent(this.node);
+        console.log(`[Wave] 👑 生成亲卫：HP ${ec.maxHp} / 移速 ${ec.moveSpeed} / 掉金 ${ec.goldOnDeath}`);
     }
 
     /** 生成分裂小怪：继承母体移速，血量按比例缩减，体型缩小且不再分裂（isMini） */
@@ -228,7 +262,7 @@ export class WaveManager extends Component {
         node.layer = this.node.layer;
         node.addComponent(UITransform).setContentSize(48, 48);
         const g = node.addComponent(Graphics);
-        g.fillColor = new Color(255, 80, 80, 255);
+        g.fillColor = Theme.enemy.bodyFallback; // 兜底红怪体色（与 DataModels.Normal 一致）
         g.circle(0, 0, ENEMY_BODY_RADIUS);
         g.fill();
         node.addComponent(EnemyController);
