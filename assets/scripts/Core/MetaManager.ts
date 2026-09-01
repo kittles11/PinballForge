@@ -2,7 +2,7 @@
  * Meta 永久进度管理器（模块级单例，与 LevelManager 同构；纯逻辑零 cc 依赖，自检可直接 import 跑行为）。
  *
  * 死亡补偿（P1-1）：城堡沦陷 / 通关结算时按当局进度发放「精铸碎片 ⚒」，
- * 碎片在「⚒ 锻造」区购买三条永久升级，跨局生效、重开一局不清零。
+ * 碎片在「⚒ 锻造」区购买永久升级（解锁树：3 根轨 + 2 前置子轨），跨局生效、重开一局不清零。
  *
  * 存档：localStorage('pinballforge_meta')，与关卡进度存档（pinballforge_progress）完全独立——
  * LevelManager.resetProgress() 只清进度 key，绝不清 meta（死了买完强化，进度归零、强化留下）。
@@ -12,14 +12,16 @@ import { Analytics } from './Analytics';
 /** 永久进度存档键（独立于 pinballforge_progress，防 resetProgress 误清） */
 const META_SAVE_KEY = 'pinballforge_meta';
 
-/** 三条永久升级的 id（castle=城堡加固 / damage=弹珠打磨 / gold=开局资金） */
-export type MetaUpgradeId = 'castle' | 'damage' | 'gold';
+/** 永久升级 id：三条根轨（castle/damage/gold）+ 两条前置解锁子轨（shard/insight，见 META_PREREQS） */
+export type MetaUpgradeId = 'castle' | 'damage' | 'gold' | 'shard' | 'insight';
 
 /** 每级加成数值（单一真源：加成计算与 UI 文案都从这里取） */
 export const META_UPGRADE_PER_LV: Record<MetaUpgradeId, number> = {
-    castle: 10, // 城堡血量上限 +10/级
-    damage: 2,  // 全弹珠伤害 +2/级
-    gold: 25,   // 开局金币 +25/级
+    castle: 10,  // 城堡血量上限 +10/级
+    damage: 2,   // 全弹珠伤害 +2/级
+    gold: 25,    // 开局金币 +25/级
+    shard: 15,   // 结算碎片获取 +15%/级
+    insight: 1,  // 选牌保底档位（Lv1 稀有地板 / Lv3 史诗地板，非线性数值，展示走 describe）
 };
 
 /** 各升级首级价格：第 n 级价格 = 首价 × n（线性阶梯递增，买满一级比一级贵） */
@@ -27,6 +29,21 @@ const META_UPGRADE_BASE_PRICE: Record<MetaUpgradeId, number> = {
     castle: 20, // 5 级共 300
     damage: 25, // 5 级共 375
     gold: 15,   // 5 级共 225
+    shard: 30,  // 5 级共 450（经济复利轨，中后期回本）
+    insight: 60 // 5 级共 900（终局投资轨：构筑质量上限）
+};
+
+/**
+ * 🌳 解锁树前置门控：子轨需父轨达到指定等级才开放购买（null = 根轨恒可用）。
+ * 树形：gold ─→ shard（经济复利）；damage ─→ insight（构筑质量）。
+ * 设计意图：给长线玩家清晰的加点路线感，而非三条平行无差别轨道。
+ */
+export const META_PREREQS: Record<MetaUpgradeId, { id: MetaUpgradeId; lv: number } | null> = {
+    castle: null,
+    damage: null,
+    gold: null,
+    shard: { id: 'gold', lv: 3 },
+    insight: { id: 'damage', lv: 3 },
 };
 
 /** 碎片发放公式常量：15 + (章-1)×6 + (关-1)×2，胜利 ×3（自检锚点复核用） */
@@ -41,34 +58,42 @@ export const META_MAX_LV = 5;
 /** 升级展示信息（ResultDialog 锻造区遍历用） */
 export interface MetaUpgradeInfo {
     id: MetaUpgradeId;
-    /** 升级名（城堡加固 / 弹珠打磨 / 开局资金） */
+    /** 升级名（城堡加固 / 弹珠打磨 / 开局资金 / 碎片收藏 / 战术洞察） */
     name: string;
-    /** 加成项单位名（城堡血量 / 弹珠伤害 / 开局金币） */
+    /** 加成项单位名（城堡血量 / 弹珠伤害 / 开局金币 / 碎片获取% / 选牌保底） */
     unit: string;
     /** 每级加成数值 */
     perLv: number;
+    /** 非线性效果的自定义展示（如战术洞察的保底档位文案）；缺省走「unit+lv×perLv」 */
+    describe?: (lv: number) => string;
+    /** 前置门控（null=根轨恒可用；子轨未达标时 UI 显示 🔒 并拒绝购买） */
+    prereq: { id: MetaUpgradeId; lv: number } | null;
 }
 
-const UPGRADE_IDS: MetaUpgradeId[] = ['castle', 'damage', 'gold'];
+const UPGRADE_IDS: MetaUpgradeId[] = ['castle', 'damage', 'gold', 'shard', 'insight'];
 
 const UPGRADE_NAMES: Record<MetaUpgradeId, string> = {
     castle: '城堡加固',
     damage: '弹珠打磨',
     gold: '开局资金',
+    shard: '碎片收藏',
+    insight: '战术洞察',
 };
 
 const UPGRADE_UNITS: Record<MetaUpgradeId, string> = {
     castle: '城堡血量',
     damage: '弹珠伤害',
     gold: '开局金币',
+    shard: '碎片获取%',
+    insight: '选牌保底',
 };
 
 class MetaManagerClass {
     /** 当前持有碎片 */
     shards = 0;
 
-    /** 三条永久升级等级（0 ~ META_MAX_LV），跨局持久 */
-    levels: Record<MetaUpgradeId, number> = { castle: 0, damage: 0, gold: 0 };
+    /** 永久升级等级（0 ~ META_MAX_LV），跨局持久 */
+    levels: Record<MetaUpgradeId, number> = { castle: 0, damage: 0, gold: 0, shard: 0, insight: 0 };
 
     /** 读档幂等守卫：首次访问时从存档恢复，之后不再重复读 */
     private _loaded = false;
@@ -84,7 +109,7 @@ class MetaManagerClass {
             if (!raw) {
                 return;
             }
-            const data = JSON.parse(raw) as { shards?: unknown; castle?: unknown; damage?: unknown; gold?: unknown };
+            const data = JSON.parse(raw) as { shards?: unknown } & Partial<Record<MetaUpgradeId, unknown>>;
             const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
             this.shards = Math.max(0, Math.floor(num(data.shards)));
             for (const id of UPGRADE_IDS) {
@@ -98,12 +123,11 @@ class MetaManagerClass {
     /** 把碎片与升级等级写入本地存档 */
     private save(): void {
         try {
-            localStorage.setItem(META_SAVE_KEY, JSON.stringify({
-                shards: this.shards,
-                castle: this.levels.castle,
-                damage: this.levels.damage,
-                gold: this.levels.gold,
-            }));
+            const payload: Record<string, number> = { shards: this.shards };
+            for (const id of UPGRADE_IDS) {
+                payload[id] = this.levels[id];
+            }
+            localStorage.setItem(META_SAVE_KEY, JSON.stringify(payload));
         } catch (e) {
             console.warn('[Meta] 永久进度写入失败', e);
         }
@@ -117,9 +141,9 @@ class MetaManagerClass {
         this.ensureLoaded();
         const ch = Math.max(1, Math.floor(chapter) || 1);
         const lv = Math.max(1, Math.floor(level) || 1);
+        const base = META_SHARDS_BASE + (ch - 1) * META_SHARDS_PER_CHAPTER + (lv - 1) * META_SHARDS_PER_LEVEL;
         const amount = Math.round(
-            (META_SHARDS_BASE + (ch - 1) * META_SHARDS_PER_CHAPTER + (lv - 1) * META_SHARDS_PER_LEVEL)
-            * (isWin ? META_WIN_MULT : 1),
+            base * (isWin ? META_WIN_MULT : 1) * (1 + this.getShardBonus() / 100),
         );
         this.shards += amount;
         this.save();
@@ -165,15 +189,31 @@ class MetaManagerClass {
         return this.getLv(id) >= META_MAX_LV;
     }
 
-    /** 下一级是否买得起（满级视为不可买） */
+    /** 🌳 前置门控：子轨需父轨达标才解锁（根轨恒解锁）。等级已投入的父轨变化会实时影响解锁态。 */
+    isUnlocked(id: MetaUpgradeId): boolean {
+        const pre = META_PREREQS[id];
+        if (!pre) {
+            return true;
+        }
+        return this.getLv(pre.id) >= pre.lv;
+    }
+
+    /** 下一级是否买得起（满级 / 未解锁视为不可买） */
     canAfford(id: MetaUpgradeId): boolean {
+        if (!this.isUnlocked(id)) {
+            return false;
+        }
         const price = this.getPrice(id);
         return price >= 0 && this.shards >= price;
     }
 
-    /** 购买下一级：成功扣费 + 升级 + 存档并返回 true；满级 / 余额不足返回 false */
+    /** 购买下一级：成功扣费 + 升级 + 存档并返回 true；满级 / 未解锁 / 余额不足返回 false */
     buy(id: MetaUpgradeId): boolean {
         this.ensureLoaded();
+        if (!this.isUnlocked(id)) {
+            console.log(`[Meta] ${UPGRADE_NAMES[id]} 未解锁（需 ${UPGRADE_NAMES[META_PREREQS[id]!.id]} Lv${META_PREREQS[id]!.lv}）`);
+            return false;
+        }
         const price = this.getPrice(id);
         if (price < 0 || this.shards < price) {
             return false;
@@ -202,13 +242,27 @@ class MetaManagerClass {
         return this.getLv('gold') * META_UPGRADE_PER_LV.gold;
     }
 
-    /** 三条升级的展示信息（锻造区按此顺序渲染） */
+    /** 碎片获取加成百分比（级数 × 15，作用于 grantRunReward 结算发放） */
+    getShardBonus(): number {
+        return this.getLv('shard') * META_UPGRADE_PER_LV.shard;
+    }
+
+    /** 战术洞察等级（RewardDialog 据此对三选一施加稀有度地板：Lv1+ 稀有、Lv3+ 史诗） */
+    getInsightLv(): number {
+        return this.getLv('insight');
+    }
+
+    /** 五条升级的展示信息（锻造区按此顺序渲染：三根轨 + 两子轨） */
     getUpgradeList(): MetaUpgradeInfo[] {
+        const describeInsight = (lv: number): string =>
+            (lv >= 3 ? '选牌保底: 史诗+' : lv >= 1 ? '选牌保底: 稀有+' : '选牌保底: 未激活');
         return UPGRADE_IDS.map((id) => ({
             id,
             name: UPGRADE_NAMES[id],
             unit: UPGRADE_UNITS[id],
             perLv: META_UPGRADE_PER_LV[id],
+            prereq: META_PREREQS[id],
+            describe: id === 'insight' ? describeInsight : undefined,
         }));
     }
 }

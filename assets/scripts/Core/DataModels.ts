@@ -426,7 +426,10 @@ export interface CardData {
         | 'UpgradePeg'
         | 'GainGold'
         | 'LavaSplash'
-        | 'LightningCombo';
+        | 'LightningCombo'
+        | 'AntiShield'
+        | 'AntiSummon'
+        | 'AntiElite';
     /** AddOrb 型卡牌要加入的弹珠类型编号（OrbType），其余动作可为空 */
     orbType?: number;
     /** 效果数值：护甲值 / 回复量 / 金币数 / 倍率等 */
@@ -504,6 +507,22 @@ export const CARD_DATABASE: CardData[] = [
         desc: '直接获得 60 金币。',
         actionType: 'GainGold', value: 60,
     },
+    // —— 机制应答卡（P2-1 下半场：敌人侧有了盾/召唤/精英，卡牌侧补应答，构筑连成闭环）——
+    {
+        id: 'univ_shieldbreaker', title: '破盾者', archetype: CardArchetype.Universal, rarity: '稀有',
+        desc: '每次命中额外剥离 1 层护盾（铁甲格挡层 / Boss 坚盾层通吃），专治举盾目标。',
+        actionType: 'AntiShield', value: 1,
+    },
+    {
+        id: 'univ_purge', title: '清剿令', archetype: CardArchetype.Universal, rarity: '稀有',
+        desc: '对召唤物与分裂小怪（君王亲卫 / 随从 / 史莱姆小怪）伤害提升 50%。',
+        actionType: 'AntiSummon', value: 0.5,
+    },
+    {
+        id: 'univ_bounty', title: '猎首契约', archetype: CardArchetype.Universal, rarity: '史诗',
+        desc: '对精英（带词缀）与章节 Boss 的伤害提升 40%——高风险目标的专属解法。',
+        actionType: 'AntiElite', value: 0.4,
+    },
 ];
 
 /** 三选一稀有度权重（P1-3 对齐：固定 100/40/15，单抽约 64%/26%/10%，后续嫌平可在此调参或加 pity） */
@@ -544,4 +563,40 @@ export function drawWeightedCards<T extends { rarity: CardData['rarity'] }>(
         picked.push(candidates.splice(chosenIdx, 1)[0]);
     }
     return picked;
+}
+
+/** 稀有度序（越大越稀有），供地板判定 */
+export const CARD_RARITY_RANK: Record<CardData['rarity'], number> = {
+    '普通': 0, '稀有': 1, '史诗': 2,
+};
+
+/**
+ * 稀有度地板保障（纯函数，Meta「战术洞察」消费）：若已抽集合内无任何 rarity ≥ floorRarity 的卡，
+ * 从候选池中随机取一张达标的替换掉已抽集合里稀有度最低的一张（无达标候选则原样返回）。
+ * rng 可注入（自检确定性）。返回新数组，不改入参。
+ */
+export function enforceRarityFloor<T extends { id: string; rarity: CardData['rarity'] }>(
+    drawn: T[], pool: T[], floorRarity: CardData['rarity'], rng: () => number = Math.random,
+): T[] {
+    const floor = CARD_RARITY_RANK[floorRarity];
+    if (drawn.some((c) => CARD_RARITY_RANK[c.rarity] >= floor)) {
+        return drawn; // 已达标
+    }
+    const pickedIds = new Set(drawn.map((c) => c.id));
+    const qualifiers = pool.filter(
+        (c) => CARD_RARITY_RANK[c.rarity] >= floor && !pickedIds.has(c.id),
+    );
+    if (qualifiers.length === 0) {
+        return drawn; // 池内无达标卡（如史诗层被滤空）→ 优雅退化
+    }
+    const replacement = qualifiers[Math.min(qualifiers.length - 1, Math.floor(rng() * qualifiers.length))];
+    const out = [...drawn];
+    let weakestIdx = 0;
+    for (let i = 1; i < out.length; i++) {
+        if (CARD_RARITY_RANK[out[i].rarity] < CARD_RARITY_RANK[out[weakestIdx].rarity]) {
+            weakestIdx = i;
+        }
+    }
+    out[weakestIdx] = replacement;
+    return out;
 }

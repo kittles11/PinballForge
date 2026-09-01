@@ -149,11 +149,20 @@ export class EnemyController extends Component {
     static heavyOverloadMult = 1;
     /** 极寒易伤（战后极寒易伤卡）：被冰封的敌人受到的伤害倍率加成，1 = 无加成，1.5 = +50% */
     static iceVulnerableMult = 1;
+    /** 🃏 破盾者（应答卡）：每次命中额外剥离的护盾层数（铁甲格挡与 Boss 坚盾通吃），0 = 未持有 */
+    static shieldbreakerStrips = 0;
+    /** 🃏 清剿令（应答卡）：对召唤物/分裂小怪（isMini）的伤害倍率，1 = 无加成 */
+    static purgeSummonMult = 1;
+    /** 🃏 猎首契约（应答卡）：对精英（带词缀）与 Boss 的伤害倍率，1 = 无加成 */
+    static bountyEliteMult = 1;
 
     /** 重开前重置全部静态状态（ResultDialog 重载场景前调用，防上次对局的强化残留） */
     static resetStaticData(): void {
         EnemyController.heavyOverloadMult = 1;
         EnemyController.iceVulnerableMult = 1;
+        EnemyController.shieldbreakerStrips = 0;
+        EnemyController.purgeSummonMult = 1;
+        EnemyController.bountyEliteMult = 1;
     }
 
     /** 攻城攻击计时器（到防线后开始累计） */
@@ -387,8 +396,9 @@ export class EnemyController extends Component {
         // 🛡️ 铁甲怪护盾：有剩余层数时免疫本次伤害（各珠子类型炮弹与跳过保底的固定伤害一并挡下），
         //   每挡一次消耗 1 层。注意：霜冻冰球的全场冰封走 freeze() 不经伤害结算，不受护盾阻挡。
         if (this.shieldCharges > 0) {
-            this.shieldCharges--;
-            this.redrawShieldPips(this.shieldCharges);
+            // 🃏 破盾者：每次命中额外剥离 shieldbreakerStrips 层（对铁甲格挡层生效）
+            this.shieldCharges -= 1 + EnemyController.shieldbreakerStrips;
+            this.redrawShieldPips(Math.max(0, this.shieldCharges));
             this.flashHit(SHIELD_BLOCK_COLOR);
             FloatingTextManager.instance?.showText(
                 '🛡️ 格挡',
@@ -413,6 +423,8 @@ export class EnemyController extends Component {
             if (orbType === OrbType.Lava) {
                 peeled += BOSS_BEHAVIOR_STATS.bulwarkPeelLava;
             }
+            // 🃏 破盾者：对 Boss 坚盾同样生效（与铁甲格挡层共用一个剥离加成）
+            peeled += EnemyController.shieldbreakerStrips;
             dmg *= BOSS_BEHAVIOR_STATS.bulwarkDamageMult;
             const pos = new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0);
             if (peeled > 0) {
@@ -439,6 +451,14 @@ export class EnemyController extends Component {
         // ★ 极寒易伤被动：被冰封的敌人所受伤害额外 × 冰封易伤倍率（极寒易伤卡，默认 1）
         if (this.isFrozen) {
             dmg *= EnemyController.iceVulnerableMult;
+        }
+        // 🃏 清剿令：召唤物/分裂小怪（isMini）受到的伤害 ×purgeSummonMult
+        if (this.isMini && EnemyController.purgeSummonMult !== 1) {
+            dmg *= EnemyController.purgeSummonMult;
+        }
+        // 🃏 猎首契约：精英（带词缀）与章节 Boss 受到的伤害 ×bountyEliteMult
+        if ((this.enemyType === EnemyType.Boss || this.affix !== null) && EnemyController.bountyEliteMult !== 1) {
+            dmg *= EnemyController.bountyEliteMult;
         }
         this.currentHp = Math.max(0, this.currentHp - dmg);
         console.log(`[Enemy] 受到伤害: ${dmg}, 剩余血量: ${this.currentHp}`);

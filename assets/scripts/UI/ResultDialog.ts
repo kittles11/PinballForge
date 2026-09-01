@@ -128,17 +128,18 @@ export class ResultDialog extends Component {
             return;
         }
         const root = new Node('ForgeSection');
-        root.addComponent(UITransform).setContentSize(500, 130);
-        // 摆位（面板 560×560 居中锚点）：descLabel(y=40) 与 RestartButton(y=-140) 之间，留出余量不重叠
-        root.setPosition(0, -48, 0);
+        root.addComponent(UITransform).setContentSize(500, 190);
+        // 摆位（面板 560×560 居中锚点）：descLabel(y=40) 与 RestartButton(y=-140) 之间。
+        // 解锁树扩到 6 行（碎片余额 + 5 升级行）：根上移至 -36、行距 34→27、字号 17→15 压缩排布。
+        root.setPosition(0, -36, 0);
         this.node.addChild(root);
         this._forgeRoot = root;
 
         // 第一行：碎片余额（本局获得 + 持有总量）
-        this._shardsLabel = this.makeForgeRow(root, 0, 48, 20, FORGE_COLOR_SHARDS);
-        // 之后三行：永久升级（与 MetaManager.getUpgradeList() 固定顺序一致），整行可点击购买
+        this._shardsLabel = this.makeForgeRow(root, 0, 44, 19, FORGE_COLOR_SHARDS);
+        // 之后五行：永久升级（与 MetaManager.getUpgradeList() 固定顺序一致），整行可点击购买
         this._rowLabels = MetaManager.getUpgradeList().map((u, i) => {
-            const label = this.makeForgeRow(root, 0, 10 - i * 34, 17, Color.WHITE.clone());
+            const label = this.makeForgeRow(root, 0, 16 - i * 27, 15, Color.WHITE.clone());
             label.node.on(Node.EventType.TOUCH_END, () => this.onForgeRowClick(u.id), this);
             return label;
         });
@@ -159,24 +160,33 @@ export class ResultDialog extends Component {
         return label;
     }
 
-    /** 刷新锻造区文案与配色：可买金色 / 钱不够灰色 / 满级暗灰 */
+    /** 刷新锻造区文案与配色：可买金色 / 钱不够灰色 / 满级暗灰 / 🔒 未解锁灰色带前置说明 */
     private refreshForge(): void {
         if (this._shardsLabel?.isValid) {
             this._shardsLabel.string = `⚒ 精铸碎片 ${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
         }
-        MetaManager.getUpgradeList().forEach((u, i) => {
+        const list = MetaManager.getUpgradeList();
+        list.forEach((u, i) => {
             const label = this._rowLabels[i];
             if (!label?.isValid) {
                 return;
             }
             const lv = MetaManager.getLv(u.id);
-            const total = lv * u.perLv;
+            const effect = u.describe ? u.describe(lv) : `${u.unit}+${lv * u.perLv}`;
+            if (!MetaManager.isUnlocked(u.id)) {
+                // 🌳 解锁树：子轨未达标 → 🔒 + 前置需求文案（规则对玩家可见，不靠猜）
+                const pre = u.prereq!;
+                const preName = list.find((x) => x.id === pre.id)?.name ?? pre.id;
+                label.string = `🔒 ${u.name}（需 ${preName} Lv${pre.lv} 解锁）`;
+                label.color = FORGE_COLOR_LOCKED;
+                return;
+            }
             const price = MetaManager.getPrice(u.id);
             if (price < 0) {
-                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${u.unit}+${total}）· 已满级`;
+                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${effect}）· 已满级`;
                 label.color = FORGE_COLOR_MAXED;
             } else {
-                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${u.unit}+${total}）· ⚒${price} 点击升级`;
+                label.string = `${u.name} Lv${lv}/${META_MAX_LV}（${effect}）· ⚒${price} 点击升级`;
                 label.color = MetaManager.canAfford(u.id) ? FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED;
             }
         });

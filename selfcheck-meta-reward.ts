@@ -75,7 +75,7 @@ check('满级加成封顶 +50', MetaManager.getCastleBonus() === 50);
 
 // ── ③ 存档持久化（stub round-trip：清内存重读档，状态恢复） ──
 MetaManager.shards = 1;
-MetaManager.levels = { castle: 0, damage: 0, gold: 0 };
+MetaManager.levels = { castle: 0, damage: 0, gold: 0, shard: 0, insight: 0 };
 (MetaManager as any)._loaded = false;
 MetaManager.ensureLoaded();
 check('存档 round-trip：碎片/等级从 localStorage 恢复',
@@ -101,12 +101,12 @@ check('showResult 发放碎片：grantRunReward(章节, 关卡, isWin)',
 check('发放防重标志 _rewardGranted（一次结算只发一次）', /if \(!this\._rewardGranted\)/.test(result));
 check('锻造区幂等创建 ensureForgeSection + 刷新 refreshForge',
     /this\.ensureForgeSection\(\);/.test(result) && /this\.refreshForge\(\);/.test(result));
-check('锻造区三行升级来自 getUpgradeList（整行可点 onForgeRowClick → MetaManager.buy）',
+check('锻造区五行升级来自 getUpgradeList（整行可点 onForgeRowClick → MetaManager.buy）',
     /MetaManager\.getUpgradeList\(\)\.map/.test(result)
     && /private onForgeRowClick\(id: MetaUpgradeId\): void/.test(result)
     && /MetaManager\.buy\(id\)/.test(result));
-check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（root y=-48）',
-    /setPosition\(0, -48, 0\)/.test(result));
+check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（6 行压缩排布 root y=-36）',
+    /setPosition\(0, -36, 0\)/.test(result));
 check('可买金色 / 不可买灰 / 满级暗灰（颜色反馈三态）',
     /FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED/.test(result) && /FORGE_COLOR_MAXED/.test(result));
 

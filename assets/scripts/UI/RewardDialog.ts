@@ -8,7 +8,8 @@ import { PegComponent } from '../Pinball/PegComponent';
 import { DeckManager } from '../Core/DeckManager';
 import { OrbController } from '../Pinball/OrbController';
 import { OrbBalance } from '../Core/OrbBalance';
-import { CardData, CARD_DATABASE, drawWeightedCards, OrbType, RelicType } from '../Core/DataModels';
+import { CardData, CARD_DATABASE, drawWeightedCards, enforceRarityFloor, OrbType, RelicType } from '../Core/DataModels';
+import { MetaManager } from '../Core/MetaManager';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, RELIC_INFO, ALL_RELIC_TYPES } from '../Core/RelicManager';
 import { GoldManager } from '../Core/GoldManager';
@@ -128,6 +129,15 @@ export class RewardDialog extends Component {
         const canAddOrb = DeckManager.instance?.canAddOrb() ?? true;
         const pool = REWARD_CARD_POOL.filter((card) => canAddOrb || card.actionType !== 'AddOrb');
         this._currentRewards = drawWeightedCards(pool, REWARD_CHOICE_COUNT);
+        // ⚒ Meta「战术洞察」（解锁树子轨）稀有度地板：Lv1+ 保证至少 1 张稀有、Lv3+ 追加至少 1 张史诗
+        //   （池内无达标卡自动原样返回——如牌库满滤掉 AddOrb 后史诗层变薄的情形）
+        const insight = MetaManager.getInsightLv();
+        if (insight >= 1) {
+            this._currentRewards = enforceRarityFloor(this._currentRewards, pool, '稀有');
+        }
+        if (insight >= 3) {
+            this._currentRewards = enforceRarityFloor(this._currentRewards, pool, '史诗');
+        }
         this.setCardLabel(this.cardA, 0);
         this.setCardLabel(this.cardB, 1);
         this.setCardLabel(this.cardC, 2);
@@ -383,6 +393,22 @@ export class RewardDialog extends Component {
             case 'LightningCombo':
                 OrbBalance.applyUpgrade('lightning_combo');
                 break;
+            // 🃏 机制应答卡（P2-1 下半场）：静态倍率挂 EnemyController，takeDamage 消费，重开由 resetStaticData 清零
+            case 'AntiShield': {
+                EnemyController.shieldbreakerStrips += reward.value ?? 1;
+                console.log(`[Reward] [${reward.title}] 命中额外剥盾层 +${EnemyController.shieldbreakerStrips}`);
+                break;
+            }
+            case 'AntiSummon': {
+                EnemyController.purgeSummonMult += reward.value ?? 0.5;
+                console.log(`[Reward] [${reward.title}] 对召唤物伤害倍率 → ×${EnemyController.purgeSummonMult.toFixed(1)}`);
+                break;
+            }
+            case 'AntiElite': {
+                EnemyController.bountyEliteMult += reward.value ?? 0.4;
+                console.log(`[Reward] [${reward.title}] 对精英/Boss 伤害倍率 → ×${EnemyController.bountyEliteMult.toFixed(1)}`);
+                break;
+            }
             default:
                 console.warn(`[Reward] 未知卡牌动作类型: ${(reward as RewardCard).actionType}`);
         }
