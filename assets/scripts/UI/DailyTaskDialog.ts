@@ -6,24 +6,25 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { DailyTaskManager } from '../Core/DailyTaskManager';
 import type { DailyTaskInfo } from '../Core/DailyTaskManager';
 import { DailyTaskBadge } from './DailyTaskBadge';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass } = _decorator;
 
 // ---------- 面板样式（与 DeckViewDialog / ShopDialog 同一套 UI 语言：深蓝底 + 金标题 + 绿关闭） ----------
 const PANEL_WIDTH = 620;
 const PANEL_HEIGHT = 700;
-const PANEL_COLOR = new Color(26, 33, 48, 240);
+const PANEL_COLOR = Theme.ui.panel;
 const OVERLAY_WH = 2200;
-const OVERLAY_COLOR = new Color(0, 0, 0, 160);
-const TITLE_COLOR = new Color(255, 216, 120, 255);
-const SUBTITLE_COLOR = new Color(170, 214, 255, 255);
-const TEXT_COLOR = new Color(226, 230, 236, 255);
+const OVERLAY_COLOR = Theme.ui.overlay;
+const TITLE_COLOR = Theme.ui.gold;
+const SUBTITLE_COLOR = Theme.ui.header;
+const TEXT_COLOR = Theme.ui.text;
 /** 领取按钮三态：可领金色 / 未完成灰 / 已领暗灰 */
-const CLAIM_COLOR = new Color(255, 190, 70, 255);
-const DISABLED_COLOR = new Color(78, 82, 92, 255);
-const CLAIMED_COLOR = new Color(120, 120, 120, 255);
-const CLOSE_BTN_COLOR = new Color(52, 118, 62, 255);
-const CLOSE_BTN_BORDER = new Color(255, 216, 120, 255);
+const CLAIM_COLOR = Theme.ui.goldDim;
+const DISABLED_COLOR = Theme.ui.disabled;
+const CLAIMED_COLOR = Theme.ui.disabledGray;
+const CLOSE_BTN_COLOR = Theme.ui.green;
+const CLOSE_BTN_BORDER = Theme.ui.gold;
 const CONTENT_WIDTH = 520;
 
 /**

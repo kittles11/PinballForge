@@ -8,6 +8,7 @@ import { CastleController } from '../Battle/CastleController';
 import { AudioManager } from '../Core/AudioManager';
 import { Analytics } from '../Core/Analytics';
 import { OrbType } from '../Core/DataModels';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass, property } = _decorator;
 
@@ -31,26 +32,26 @@ const PANEL_WIDTH = 620;
 const PANEL_HEIGHT = 780;
 const BTN_WIDTH = 260;
 const BTN_HEIGHT = 145;
-const PANEL_COLOR = new Color(26, 33, 48, 238);
+const PANEL_COLOR = Theme.ui.panel;
 /** 全屏暗色半透明遮罩（防止点击穿透到背后钉板/发射器），默认铺满画布 960×640 */
 const OVERLAY_WH = 960;
-const OVERLAY_COLOR = new Color(0, 0, 0, 160);
+const OVERLAY_COLOR = Theme.ui.overlay;
 /** 按钮可用底色 */
-const BTN_ACTIVE_COLOR = new Color(46, 84, 128, 255);
+const BTN_ACTIVE_COLOR = Theme.ui.blueActive;
 /** 按钮禁用（金币不足 / 无球可删 / 城堡已毁）底色 */
-const BTN_DISABLED_COLOR = new Color(78, 82, 92, 255);
+const BTN_DISABLED_COLOR = Theme.ui.disabled;
 /** 继续下一波按钮强调色 */
-const CONTINUE_COLOR = new Color(52, 118, 62, 255);
+const CONTINUE_COLOR = Theme.ui.green;
 /** 按钮文字色 */
-const TEXT_COLOR = new Color(255, 255, 255, 255);
+const TEXT_COLOR = Theme.ui.text;
 /** 按钮禁用文字色 */
-const BTN_TEXT_DISABLED_COLOR = new Color(185, 188, 194, 255);
+const BTN_TEXT_DISABLED_COLOR = Theme.ui.textDim;
 /** 标题（金色） */
-const TITLE_COLOR = new Color(255, 216, 120, 255);
+const TITLE_COLOR = Theme.ui.gold;
 /** 消息成功提示色 */
-const MSG_SUCCESS_COLOR = new Color(140, 255, 160, 255);
+const MSG_SUCCESS_COLOR = Theme.ui.greenBright;
 /** 消息错误提示色 */
-const MSG_ERROR_COLOR = new Color(255, 110, 110, 255);
+const MSG_ERROR_COLOR = Theme.ui.red;
 
 /** 商品卡内部【顶部标题行】字号：图标 + 名称 */
 const CARD_TITLE_SIZE = 18;
@@ -62,7 +63,7 @@ const CARD_DESC_LINE_HEIGHT = 18;
 /** 商品卡内部【底部按钮行】字号 */
 const CARD_BTN_SIZE = 14;
 /** 标题行金色（金黄粗体） */
-const TITLE_GOLD_COLOR = new Color(255, 216, 70, 255);
+const TITLE_GOLD_COLOR = Theme.ui.gold;
 
 /** 单个商店按钮的运行时句柄（支持动态置灰重绘） */
 interface ShopButton {
@@ -553,7 +554,7 @@ export class ShopDialog extends Component {
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.CENTER;
         descLabel.string = desc;
-        descLabel.color = new Color(226, 230, 236, 255);
+        descLabel.color = Theme.ui.text;
 
         // ---- 3) 底部按钮行：独立按钮节点，显示购买 / 已售罄 ----
         let btnNode = node.getChildByName('BtnLabel');

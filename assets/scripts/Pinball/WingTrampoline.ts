@@ -5,6 +5,7 @@ import {
 } from 'cc';
 import { AudioManager } from '../Core/AudioManager';
 import { OrbController } from './OrbController';
+import { EASE_PUNCH, Theme } from '../Core/ArtTheme';
 
 const { ccclass } = _decorator;
 
@@ -14,8 +15,8 @@ const { ccclass } = _decorator;
 const WING_BOOST_DELTA_V = 620;
 /** 同一颗弹珠的补冲防抖（ms）：贴面持续接触不重复加速，防无限叠速 */
 const WING_BOOST_COOLDOWN_MS = 220;
-/** 蹦床受击闪光色（亮白青） */
-const FLASH_COLOR = new Color(190, 250, 255, 255);
+/** 蹦床受击闪光色（亮白青，统一取自 ArtTheme） */
+const FLASH_COLOR = Theme.wing.flash;
 
 /**
  * 侧翼弹力蹦床受击组件（挂在左右蹦床节点上，由 BoardDeflectorManager.buildWingTrampoline 装配）：
@@ -114,7 +115,7 @@ export class WingTrampoline extends Component {
         Tween.stopAllByTarget(this.node);
         const base = this._baseScale;
         tween(this.node)
-            .to(0.05, { scale: new Vec3(base.x * 1.12, base.y * 0.86, base.z) })
+            .to(0.05, { scale: new Vec3(base.x * 1.12, base.y * 0.86, base.z) }, { easing: EASE_PUNCH })
             .to(0.14, { scale: new Vec3(base.x, base.y, base.z) })
             .start();
     }

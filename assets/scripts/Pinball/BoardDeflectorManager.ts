@@ -3,6 +3,7 @@ import {
     RigidBody2D, ERigidBody2DType, BoxCollider2D, PolygonCollider2D, UITransform, Tween,
 } from 'cc';
 import { WingTrampoline } from './WingTrampoline';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass } = _decorator;
 
@@ -48,10 +49,10 @@ const CAP_HALF_HEIGHT = 12.5;
 /** 分流帽弹性系数 */
 const CAP_RESTITUTION = 0.85;
 
-// ---------- 外观（深灰板体 + 青蓝发光描边） ----------
-const BAR_FILL_COLOR = new Color(42, 46, 56, 255);      // 深灰板体
-const EDGE_COLOR = new Color(53, 224, 255, 255);        // 亮青蓝描边
-const GLOW_COLOR = new Color(0, 229, 255, 70);          // 青蓝辉光（半透明外晕）
+// ---------- 外观（深灰板体 + 青蓝发光描边，统一取自 ArtTheme.machine） ----------
+const BAR_FILL_COLOR = Theme.machine.body;
+const EDGE_COLOR = Theme.machine.edge;
+const GLOW_COLOR = Theme.machine.glow;
 // （蹦床受击闪光色 FLASH_COLOR 已随 WingTrampoline 组件迁至 ./WingTrampoline）
 
 

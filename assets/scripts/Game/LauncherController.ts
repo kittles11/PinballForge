@@ -10,6 +10,7 @@ import { PegComponent } from '../Pinball/PegComponent';
 import { OrbBalance } from '../Core/OrbBalance';
 import { simulateAimPreview, PreviewPeg } from '../Core/AimPreview';
 import { OrbType } from '../Core/DataModels';
+import { cloneColor, orbAimColor } from '../Core/ArtTheme';
 
 const { ccclass, property } = _decorator;
 
@@ -31,14 +32,6 @@ const PREVIEW_DOT_R = 3.5;
 const FIELD_HALF_W = 352;
 /** 底部截断线：漏斗接收区上沿（y 低于此即进入漏斗区，预测到此为止） */
 const FUNNEL_Y = -340;
-
-/** 各球种瞄准线颜色（使用纯数字键，彻底杜绝模块加载期循环引用未定义） */
-const AIM_COLORS: Record<number, Color> = {
-    0: new Color(255, 255, 255, 220),      // 普通球 (Normal=0)：银白
-    1: new Color(0, 255, 255, 240),        // 闪电球 (Lightning=1)：青蓝电光
-    2: new Color(255, 85, 0, 240),          // 熔岩球 (Lava=2)：炽热橙红
-    3: new Color(224, 247, 250, 240),      // 霜冻球 (Frost=3)：雪白微蓝
-};
 
 /**
  * 发射器：触摸拖拽瞄准 + 松手发射弹珠。
@@ -248,7 +241,7 @@ export class LauncherController extends Component {
         const sy = this._tmpLocal.y;
 
         const nextType = DeckManager.instance?.peekNextOrbType() ?? 0;
-        const lineColor = AIM_COLORS[nextType] ?? AIM_COLORS[0];
+        const lineColor = orbAimColor(nextType); // 球种瞄准线色（ArtTheme 语义色板）
 
         // 首段重力抛物线模拟：初速 = launchSpeed×倍率（对齐 fireOrb 的 velocity+impulse 叠加），
         // 重力取物理系统真值；命中钉子/出界/进漏斗即截断（不做反弹链）
@@ -267,10 +260,10 @@ export class LauncherController extends Component {
         });
 
         g.clear();
-        g.fillColor = lineColor;
 
         // 沿弧长均匀撒点（Peggle 式点列：弯曲轨迹上等距实心点，起点处不画）
         const pts = sim.points;
+        const dots: Array<[number, number]> = [];
         let px = pts[0][0];
         let py = pts[0][1];
         let need = PREVIEW_DOT_SPACING;
@@ -286,7 +279,7 @@ export class LauncherController extends Component {
                 while (segLen >= need) {
                     px += ux * need;
                     py += uy * need;
-                    g.circle(px, py, PREVIEW_DOT_R);
+                    dots.push([px, py]);
                     segLen -= need;
                     need = PREVIEW_DOT_SPACING;
                 }
@@ -294,6 +287,19 @@ export class LauncherController extends Component {
                 py += uy * segLen;
             }
             need -= segLen;
+        }
+
+        // ★ 柔光瞄准点：大而淡的底光 + 小而实的芯（同 Graphics 两层绘制，零额外 draw call）
+        const soft = cloneColor(lineColor);
+        soft.a = 70;
+        g.fillColor = soft;
+        for (const [sx, sy] of dots) {
+            g.circle(sx, sy, PREVIEW_DOT_R * 2.6);
+        }
+        g.fill();
+        g.fillColor = lineColor;
+        for (const [cx, cy] of dots) {
+            g.circle(cx, cy, PREVIEW_DOT_R);
         }
         g.fill();
 

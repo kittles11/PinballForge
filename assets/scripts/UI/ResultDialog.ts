@@ -10,14 +10,15 @@ import { ShopDialog } from './ShopDialog';
 import { OrbBalance } from '../Core/OrbBalance';
 import { MetaManager, META_MAX_LV } from '../Core/MetaManager';
 import type { MetaUpgradeId } from '../Core/MetaManager';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass, property } = _decorator;
 
 /** 锻造区配色：碎片余额行 / 可买行（金）/ 钱不够（灰）/ 已满级（暗灰） */
-const FORGE_COLOR_SHARDS = new Color(255, 216, 112, 255);
-const FORGE_COLOR_BUYABLE = new Color(255, 216, 112, 255);
-const FORGE_COLOR_LOCKED = new Color(158, 158, 158, 255);
-const FORGE_COLOR_MAXED = new Color(120, 120, 120, 255);
+const FORGE_COLOR_SHARDS = Theme.ui.gold;
+const FORGE_COLOR_BUYABLE = Theme.ui.gold;
+const FORGE_COLOR_LOCKED = Theme.ui.gray;
+const FORGE_COLOR_MAXED = Theme.ui.disabledGray;
 
 /**
  * 胜负结算弹窗：挂载在 Canvas/UILayer/ResultDialog 节点上。

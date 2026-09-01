@@ -4,6 +4,8 @@ import { AudioManager } from '../Core/AudioManager';
 import { RelicType } from '../Core/DataModels';
 import { RelicManager } from '../Core/RelicManager';
 import { MetaManager } from '../Core/MetaManager';
+import { Theme } from '../Core/ArtTheme';
+import { FxManager } from '../Core/FxManager';
 
 const { ccclass, property } = _decorator;
 
@@ -91,9 +93,14 @@ export class CastleController extends Component {
 
         this.updateDisplay();
 
+        // ★ 屏幕边缘红晕脉冲：实际掉血时才触发（护盾完全吸收则不惊扰）
+        if (leaked > 0) {
+            FxManager.screenPulse();
+        }
+
         if (this.hpLabel) {
             // 文字变红并剧烈弹跳
-            this.hpLabel.color = new Color(255, 50, 50, 255);
+            this.hpLabel.color = Theme.ui.red;
             // 打断上一次残留弹跳，避免连续攻击时动画叠加抖动、颜色提前复原
             Tween.stopAllByTarget(this.hpLabel.node);
             tween(this.hpLabel.node)
@@ -160,7 +167,7 @@ export class CastleController extends Component {
     private fadeOutSprite(sp: Sprite): void {
         Tween.stopAllByTarget(sp);
         tween(sp)
-            .to(0.45, { color: new Color(255, 255, 255, 0) })
+            .to(0.45, { color: Theme.fx.fadeWhite })
             .start();
     }
 

@@ -3,6 +3,7 @@ import {
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { DailyTaskManager } from '../Core/DailyTaskManager';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass } = _decorator;
 
@@ -10,12 +11,12 @@ const { ccclass } = _decorator;
 const BADGE_SIZE = 36;
 const BADGE_X = 244;
 const BADGE_Y = 600;
-const BADGE_BG = new Color(0x1E, 0x24, 0x38, 0xCC);
-const BADGE_RING = new Color(255, 216, 120, 170);
+const BADGE_BG = Theme.ui.badgeBg;
+const BADGE_RING = Theme.ui.gold;
 const BADGE_EMOJI = '📋';
 const BADGE_EMOJI_SIZE = 20;
 /** 可领取红点（右上角小圆） */
-const DOT_COLOR = new Color(255, 82, 82, 255);
+const DOT_COLOR = Theme.ui.redDot;
 const DOT_OFFSET_X = 11;
 const DOT_OFFSET_Y = 11;
 const DOT_RADIUS = 6;

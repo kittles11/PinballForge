@@ -94,8 +94,9 @@ check('钉子世界坐标换入 trajectoryGraphics 本地系（与轨迹同坐�
     /graphics\.inverseTransformPoint\(this\._tmpLocal, this\._tmpWorld\)/.test(launcher));
 check('命中高亮：目标钉外圈描边（r + ORB_RADIUS + 4）',
     /g\.circle\(sim\.hitPeg\.x, sim\.hitPeg\.y, sim\.hitPeg\.r \+ ORB_RADIUS \+ 4\)/.test(launcher));
-check('点列沿弧长均匀撒点（PREVIEW_DOT_SPACING 间隔）',
-    /PREVIEW_DOT_SPACING = 26/.test(launcher) && /g\.circle\(px, py, PREVIEW_DOT_R\)/.test(launcher));
+check('点列沿弧长均匀撒点（PREVIEW_DOT_SPACING 间隔，柔光双层绘制）',
+    /PREVIEW_DOT_SPACING = 26/.test(launcher) && /dots\.push\(\[px, py\]\)/.test(launcher)
+    && /g\.circle\(cx, cy, PREVIEW_DOT_R\)/.test(launcher));
 const drawBody = (launcher.match(/private drawTrajectory\(\): void \{[\s\S]*?\n    \}/) || [''])[0];
 check('drawTrajectory 不创建真实体（纯 Graphics 绘制，无 instantiate/RigidBody2D）',
     drawBody.length > 0 && !drawBody.includes('instantiate') && !drawBody.includes('RigidBody2D'));

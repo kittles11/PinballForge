@@ -1,6 +1,7 @@
 import {
     _decorator, Component, Node, Color, Vec3, Label, UITransform, UIOpacity, Tween, tween, find,
 } from 'cc';
+import { EASE_PUNCH } from './ArtTheme';
 
 const { ccclass } = _decorator;
 
@@ -118,11 +119,11 @@ export class FloatingTextManager extends Component {
         Tween.stopAllByTarget(node);
 
         if (isCrit) {
-            // 暴击：1.4 倍起手 → 0.06s 弹跳至 1.6 倍 → 0.4s 上浮 40px + 淡出
+            // 暴击：1.4 倍起手 → 0.06s 弹跳至 1.6 倍（backOut 过冲）→ 0.4s 上浮 40px + 淡出
             node.setScale(CRIT_SCALE_FROM, CRIT_SCALE_FROM, 1);
             const endY = node.position.y + CRIT_FLOAT_DISTANCE;
             tween(node)
-                .to(CRIT_POP_DURATION, { scale: new Vec3(CRIT_SCALE_TO, CRIT_SCALE_TO, 1) })
+                .to(CRIT_POP_DURATION, { scale: new Vec3(CRIT_SCALE_TO, CRIT_SCALE_TO, 1) }, { easing: EASE_PUNCH })
                 .to(CRIT_FLOAT_DURATION, { position: new Vec3(node.position.x, endY, 0) })
                 .call(() => this._recycle(node))
                 .start();

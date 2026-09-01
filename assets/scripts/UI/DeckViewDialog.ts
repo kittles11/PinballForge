@@ -6,23 +6,24 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { DeckManager } from '../Core/DeckManager';
 import { RelicManager } from '../Core/RelicManager';
 import { OrbType, RelicType, RELIC_DATABASE, ALL_RELIC_TYPES } from '../Core/DataModels';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass, property } = _decorator;
 
 // ---------- 纯代码 UI 样式（无 Inspector 布置时自动构建整套背包界面，与 ShopDialog 同款风格） ----------
 const PANEL_WIDTH = 660;
 const PANEL_HEIGHT = 760;
-const PANEL_COLOR = new Color(26, 33, 48, 240);
+const PANEL_COLOR = Theme.ui.panel;
 /** 全屏暗色半透明遮罩（防止点击穿透到背后钉板/发射器；远大于 720×1280 画布，任何分辨率下都铺满） */
 const OVERLAY_WH = 2200;
-const OVERLAY_COLOR = new Color(0, 0, 0, 160);
+const OVERLAY_COLOR = Theme.ui.overlay;
 /** 标题金色 / 分区标题淡蓝 / 正文浅灰 */
-const TITLE_COLOR = new Color(255, 216, 120, 255);
-const HEADER_COLOR = new Color(170, 214, 255, 255);
-const TEXT_COLOR = new Color(226, 230, 236, 255);
+const TITLE_COLOR = Theme.ui.gold;
+const HEADER_COLOR = Theme.ui.header;
+const TEXT_COLOR = Theme.ui.text;
 /** 关闭按钮（绿底金边，与「继续下一关」同色系） */
-const CLOSE_BTN_COLOR = new Color(52, 118, 62, 255);
-const CLOSE_BTN_BORDER = new Color(255, 216, 120, 255);
+const CLOSE_BTN_COLOR = Theme.ui.green;
+const CLOSE_BTN_BORDER = Theme.ui.gold;
 /** 内容区统一宽度 */
 const CONTENT_WIDTH = 600;
 

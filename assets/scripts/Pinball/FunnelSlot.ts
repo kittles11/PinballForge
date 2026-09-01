@@ -1,9 +1,11 @@
 import {
     _decorator, Component, Enum, Collider2D, Contact2DType, IPhysics2DContact,
-    Sprite, Color, Vec3, tween, Tween, Node, Label, UITransform, UIOpacity,
+    Sprite, Color, Vec3, tween, Tween, Node, Label, UITransform, UIOpacity, Graphics,
 } from 'cc';
 import { OrbController } from './OrbController';
 import { FunnelType } from '../Core/DataModels';
+import { cloneColor, EASE_PUNCH, funnelColor } from '../Core/ArtTheme';
+import { FxManager } from '../Core/FxManager';
 
 const { ccclass, property } = _decorator;
 
@@ -31,6 +33,7 @@ export class FunnelSlot extends Component {
             this._collider.on(Contact2DType.BEGIN_CONTACT, this.onBeginContact, this);
         }
         this.ensureTypeLabel();
+        this.ensureNeonPillar();
     }
 
     protected onDestroy(): void {
@@ -65,6 +68,8 @@ export class FunnelSlot extends Component {
     private processOrb(orb: OrbController): void {
         orb.triggerFunnelAndDestroy(this);
         this.playSwallowFeedback();
+        // ★ 吞球演出：四周火花向槽口汇聚 + 竖直光柱闪（主题色）
+        FxManager.converge(this.node.worldPosition, FunnelSlot.themeColor(this.funnelType));
     }
 
     /**
@@ -99,12 +104,12 @@ export class FunnelSlot extends Component {
         if (!node?.isValid) {
             return;
         }
-        // Y 轴压缩回弹
+        // Y 轴压缩回弹（backOut 过冲）
         Tween.stopAllByTarget(node);
         const base = node.scale.clone();
-        const compressed = new Vec3(base.x, base.y * 0.6, base.z);
+        const compressed = new Vec3(base.x * 1.15, base.y * 0.6, base.z);
         tween(node)
-            .to(0.06, { scale: compressed })
+            .to(0.06, { scale: compressed }, { easing: EASE_PUNCH })
             .to(0.12, { scale: base })
             .start();
 
@@ -125,14 +130,35 @@ export class FunnelSlot extends Component {
         }
     }
 
-    /** 槽位主题色：聚能=红 / 精炼=蓝 / 金币=金 */
+    /** 槽位主题色：聚能=红 / 精炼=蓝 / 金币=金（统一取自 ArtTheme） */
     private static themeColor(type: FunnelType): Color {
-        if (type === FunnelType.IceFreeze) {
-            return new Color(0, 255, 255, 255); // 冰蓝
+        return funnelColor(type);
+    }
+
+    /** 霓虹光柱：槽口向上的三层梯形渐隐光柱（主题色），让「三选一漏斗」在场上可读（幂等） */
+    private ensureNeonPillar(): void {
+        const node = this.node;
+        if (!node?.isValid || node.getChildByName('NeonPillar')) {
+            return;
         }
-        if (type === FunnelType.GoldCoin) {
-            return new Color(255, 215, 0, 255); // 金黄
+        const c = FunnelSlot.themeColor(this.funnelType);
+        const pillar = new Node('NeonPillar');
+        pillar.layer = node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
+        pillar.addComponent(UITransform);
+        const g = pillar.addComponent(Graphics);
+        // 三层梯形：外层宽而淡 → 内层窄而亮（alpha 依次抬升模拟渐隐）
+        const layers: Array<[number, number]> = [[92, 55], [66, 90], [38, 150]];
+        for (const [halfTop, alpha] of layers) {
+            const col = cloneColor(c);
+            col.a = alpha;
+            g.fillColor = col;
+            g.moveTo(-44, -30);
+            g.lineTo(-halfTop, 160);
+            g.lineTo(halfTop, 160);
+            g.lineTo(44, -30);
+            g.close();
+            g.fill();
         }
-        return new Color(255, 51, 51, 255); // 重炮红
+        node.addChild(pillar);
     }
 }

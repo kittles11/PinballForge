@@ -2,6 +2,7 @@ import {
     _decorator, Component, Node, Label, UITransform, Graphics, Color, Vec2, Vec3, EventTouch, find, tween, Tween,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
+import { Theme } from '../Core/ArtTheme';
 
 const { ccclass } = _decorator;
 
@@ -18,9 +19,9 @@ const BTN_SIZE = 36;
 const BTN_X = 290;
 const BTN_Y = 600;
 /** 底板：半透明深暗色圆形 #1E2438CC */
-const BTN_BG = new Color(0x1E, 0x24, 0x38, 0xCC);
+const BTN_BG = Theme.ui.badgeBg;
 /** 装饰：暗金细环描边（与全局金边 UI 语言一致） */
-const BTN_RING = new Color(255, 216, 120, 170);
+const BTN_RING = Theme.ui.gold;
 /** 按钮文字：单个 Emoji，字号 20，水平/垂直绝对居中 */
 const BTN_EMOJI = '🎒';
 const EMOJI_FONT_SIZE = 20;

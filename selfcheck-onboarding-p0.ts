@@ -35,7 +35,7 @@ const tutorial = strip(read('Core', 'TutorialManager.ts'));
 check('入槽结算弹出「⚡基础 ×倍率」第一段跳字',
     /⚡\$\{Math\.round\(base\)\} ×\$\{multStr\}/.test(orb));
 check('入槽结算弹出「总伤 💥」暴击大字（颜色跟随球种拖尾色）',
-    /\$\{Math\.round\(damage\)\} 💥/.test(orb) && /ORB_STREAK_COLORS\[this\.orbType\] \?\? Color\.WHITE/.test(orb));
+    /\$\{Math\.round\(damage\)\} 💥/.test(orb) && /orbTrailColor\(this\.orbType\)/.test(orb));
 check('金币槽不重复弹伤害大字（type !== FunnelType.GoldCoin 分支）',
     /if \(type !== FunnelType\.GoldCoin\)\s*\{/.test(orb));
 check('炮塔开火震屏按伤害爬升（min(14, 6 + damage/100)）',
