@@ -76,7 +76,7 @@ check('EventBus：ENEMY_SPLIT 载荷含 summon/goldDrop/spawnType 可选旗标',
 check('发射端：OrbController 入槽结算携带 funnelType（剥盾语义源头）',
     /FIRE_TURRET, \{ damage: Math\.round\(damage\), orbType: this\.orbType, funnelType: type \}/.test(orb));
 check('透传链：TurretController 命中时把 funnelType 传入 takeDamage（缺省 null）',
-    /takeDamage\(data\.damage, data\.orbType, false, data\.funnelType \?\? null\)/.test(turret));
+    /takeDamage\((?:dmg|data\.damage), data\.orbType, false, data\.funnelType \?\? null\)/.test(turret));
 
 // ── ③ 行为接线 ──
 check('Boss 出生按章节轮换表装配行为（回复 + 至多 1 特色，Hick 上限）',

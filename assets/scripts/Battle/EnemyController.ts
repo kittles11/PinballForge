@@ -425,6 +425,10 @@ export class EnemyController extends Component {
             if (orbType === OrbType.Lava) {
                 peeled += BOSS_BEHAVIOR_STATS.bulwarkPeelLava;
             }
+            // 🌳 熔核球：超重重压剥 3 层（一发即碎 Boss 坚盾）
+            if (orbType === OrbType.Magma) {
+                peeled += BOSS_BEHAVIOR_STATS.bulwarkPeelMagma;
+            }
             // 🃏 破盾者：对 Boss 坚盾同样生效（与铁甲格挡层共用一个剥离加成）
             peeled += EnemyController.shieldbreakerStrips;
             dmg *= BOSS_BEHAVIOR_STATS.bulwarkDamageMult;
@@ -495,6 +499,10 @@ export class EnemyController extends Component {
             case OrbType.Plasma:
                 // 🌳 等离子球：身体闪等离紫光（无视护盾的透传命中反馈）
                 this.flashHit(Theme.orb.plasma);
+                break;
+            case OrbType.Magma:
+                // 🌳 熔核球：身体闪洋红重光（💥 重压命中反馈）
+                this.flashHit(Theme.orb.magma);
                 break;
             default:
                 // 普通 / 金币弹：标准白闪（金币已改为入槽即发，见 OrbController.triggerFunnelAndDestroy，此处不再发放防重复）

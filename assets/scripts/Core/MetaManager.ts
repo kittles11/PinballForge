@@ -12,11 +12,11 @@ import { Analytics } from './Analytics';
 /** 永久进度存档键（独立于 pinballforge_progress，防 resetProgress 误清） */
 const META_SAVE_KEY = 'pinballforge_meta';
 
-/** 永久升级 id：三条根轨（castle/damage/gold）+ 七条前置解锁子轨（见 META_PREREQS 树形） */
+/** 永久升级 id：三条根轨（castle/damage/gold）+ 九条前置解锁子轨（见 META_PREREQS 树形） */
 export type MetaUpgradeId =
     | 'castle' | 'damage' | 'gold'
-    | 'orbCap' | 'boardLab' | 'startShield'
-    | 'shard' | 'insight' | 'orbLab' | 'forbiddenPack';
+    | 'orbCap' | 'boardLab' | 'startShield' | 'siege'
+    | 'shard' | 'insight' | 'orbLab' | 'forbiddenPack' | 'bargain';
 
 /** 每级加成数值（单一真源：加成计算与 UI 文案都从这里取） */
 export const META_UPGRADE_PER_LV: Record<MetaUpgradeId, number> = {
@@ -26,10 +26,12 @@ export const META_UPGRADE_PER_LV: Record<MetaUpgradeId, number> = {
     orbCap: 1,        // 牌库容量上限 +1/级（8 → 最多 13）
     boardLab: 1,      // 钉板实验台：解锁档位（Lv1 版型D / Lv3 版型E，非线性，展示走 describe）
     startShield: 15,  // 开局要塞护盾 +15/级
+    siege: 20,        // 攻城炮台：炮塔子弹伤害 +20%/级
     shard: 15,        // 结算碎片获取 +15%/级
     insight: 1,       // 选牌保底档位（Lv1 稀有地板 / Lv3 史诗地板，非线性数值，展示走 describe）
-    orbLab: 1,        // 球种工坊：解锁档位（Lv1 等离子球卡入池，非线性，展示走 describe）
+    orbLab: 1,        // 球种工坊：解锁档位（Lv1 等离子球 / Lv3 熔核球，非线性，展示走 describe）
     forbiddenPack: 1, // 禁忌卡包：解锁档位（Lv1 聚能奇点 / Lv3 猎神契约，非线性，展示走 describe）
+    bargain: 8,       // 商道：商店价格 -8%/级（最多 -40%）
 };
 
 /** 各升级首级价格：第 n 级价格 = 首价 × n（线性阶梯递增，买满一级比一级贵） */
@@ -40,19 +42,23 @@ const META_UPGRADE_BASE_PRICE: Record<MetaUpgradeId, number> = {
     orbCap: 35,        // 5 级共 525（构筑宽度：牌库扩容）
     boardLab: 50,      // 5 级共 750（内容解锁：新钉板版型）
     startShield: 25,   // 5 级共 375（开局护盾：前期容错）
+    siege: 40,         // 5 级共 600（炮塔 DPS：稳定输出轨）
     shard: 30,         // 5 级共 450（经济复利轨，中后期回本）
     insight: 60,       // 5 级共 900（终局投资轨：构筑质量上限）
     orbLab: 70,        // 5 级共 1050（内容解锁：新球种）
     forbiddenPack: 80, // 5 级共 1200（顶级内容解锁：跨局专属强力卡）
+    bargain: 30,       // 5 级共 450（经济轨：商店折扣）
 };
 
 /**
  * 🌳 解锁树前置门控：子轨需父轨达到指定等级才开放购买（null = 根轨恒可用）。
- * 树形（三条根，最深 3 级）：
+ * 树形（三条根，最深 3 级，12 轨）：
  *   castle ─┬→ orbCap ─→ boardLab（结构→容量→钉板实验台）
- *           └→ startShield（开局护盾）
- *   gold ───→ shard（经济复利）
- *   damage ─┬→ orbLab（球种工坊：解锁等离子球）
+ *           ├→ startShield（开局护盾）
+ *           └→ siege（攻城炮台）
+ *   gold ───┬→ bargain（商道：商店折扣）
+ *           └→ shard（经济复利）
+ *   damage ─┬→ orbLab（球种工坊：解锁等离子球 / 熔核球）
  *           └→ insight ─→ forbiddenPack（伤害→构筑质量→禁忌卡包）
  * 设计意图：给长线玩家清晰的加点路线感与「解锁新内容」的目标感，而非平行无差别轨道。
  */
@@ -63,7 +69,9 @@ export const META_PREREQS: Record<MetaUpgradeId, { id: MetaUpgradeId; lv: number
     orbCap: { id: 'castle', lv: 3 },
     boardLab: { id: 'orbCap', lv: 2 },
     startShield: { id: 'castle', lv: 2 },
+    siege: { id: 'castle', lv: 4 },
     shard: { id: 'gold', lv: 3 },
+    bargain: { id: 'gold', lv: 2 },
     insight: { id: 'damage', lv: 3 },
     orbLab: { id: 'damage', lv: 2 },
     forbiddenPack: { id: 'insight', lv: 2 },
@@ -93,10 +101,11 @@ export interface MetaUpgradeInfo {
     prereq: { id: MetaUpgradeId; lv: number } | null;
 }
 
-/** 锻造区渲染顺序：按解锁树分支排列，ResultDialog 前 5 条入左列、后 5 条入右列 */
+/** 锻造区渲染顺序：按解锁树分支排列，ResultDialog 三列自适应（前 4 左 / 中 4 中 / 后 4 右） */
 const UPGRADE_IDS: MetaUpgradeId[] = [
-    'castle', 'orbCap', 'boardLab', 'startShield', 'gold',
-    'shard', 'damage', 'orbLab', 'insight', 'forbiddenPack',
+    'castle', 'orbCap', 'boardLab', 'startShield',
+    'damage', 'orbLab', 'insight', 'forbiddenPack',
+    'gold', 'shard', 'bargain', 'siege',
 ];
 
 const UPGRADE_NAMES: Record<MetaUpgradeId, string> = {
@@ -104,12 +113,14 @@ const UPGRADE_NAMES: Record<MetaUpgradeId, string> = {
     orbCap: '弹珠槽扩容',
     boardLab: '钉板实验台',
     startShield: '战备护盾',
-    gold: '开局资金',
-    shard: '碎片收藏',
     damage: '弹珠打磨',
     orbLab: '球种工坊',
     insight: '战术洞察',
     forbiddenPack: '禁忌卡包',
+    gold: '开局资金',
+    shard: '碎片收藏',
+    bargain: '商道',
+    siege: '攻城炮台',
 };
 
 const UPGRADE_UNITS: Record<MetaUpgradeId, string> = {
@@ -117,12 +128,14 @@ const UPGRADE_UNITS: Record<MetaUpgradeId, string> = {
     orbCap: '牌库容量',
     boardLab: '钉板版型',
     startShield: '开局护盾',
-    gold: '开局金币',
-    shard: '碎片获取%',
     damage: '弹珠伤害',
     orbLab: '解锁球种',
     insight: '选牌保底',
     forbiddenPack: '禁忌卡牌',
+    gold: '开局金币',
+    shard: '碎片获取%',
+    bargain: '商店折扣%',
+    siege: '炮台伤害%',
 };
 
 class MetaManagerClass {
@@ -131,8 +144,9 @@ class MetaManagerClass {
 
     /** 永久升级等级（0 ~ META_MAX_LV），跨局持久 */
     levels: Record<MetaUpgradeId, number> = {
-        castle: 0, orbCap: 0, boardLab: 0, startShield: 0, gold: 0,
-        shard: 0, damage: 0, orbLab: 0, insight: 0, forbiddenPack: 0,
+        castle: 0, orbCap: 0, boardLab: 0, startShield: 0,
+        damage: 0, orbLab: 0, insight: 0, forbiddenPack: 0,
+        gold: 0, shard: 0, bargain: 0, siege: 0,
     };
 
     /** 读档幂等守卫：首次访问时从存档恢复，之后不再重复读 */
@@ -317,21 +331,37 @@ class MetaManagerClass {
         return this.getLv('forbiddenPack');
     }
 
-    /** 十条升级的展示信息（锻造区按此顺序渲染：三根轨 + 七子轨，树分支序） */
+    /** 攻城炮台伤害加成倍率（级数 × 0.20，TurretController 子弹伤害乘入；Lv5 → +100%） */
+    getSiegeBonus(): number {
+        return this.getLv('siege') * (META_UPGRADE_PER_LV.siege / 100);
+    }
+
+    /** 商道折扣率（级数 × 0.08，封顶 0.40；ShopDialog 统一扣费与显示价乘 (1 - 此值)） */
+    getBargainDiscount(): number {
+        return Math.min(0.40, this.getLv('bargain') * (META_UPGRADE_PER_LV.bargain / 100));
+    }
+
+    /** 十二条升级的展示信息（锻造区按此顺序渲染：三根轨 + 九子轨，树分支序） */
     getUpgradeList(): MetaUpgradeInfo[] {
         const describeInsight = (lv: number): string =>
             (lv >= 3 ? '保底史诗' : lv >= 1 ? '保底稀有' : '未激活');
         const describeBoardLab = (lv: number): string =>
             (lv >= 3 ? '版型D+E' : lv >= 1 ? '版型D' : '未解锁');
         const describeOrbLab = (lv: number): string =>
-            (lv >= 1 ? '解锁等离子球' : '未解锁');
+            (lv >= 3 ? '等离子+熔核' : lv >= 1 ? '解锁等离子球' : '未解锁');
         const describeForbidden = (lv: number): string =>
             (lv >= 3 ? '奇点+猎神' : lv >= 1 ? '聚能奇点' : '未解锁');
+        const describeBargain = (lv: number): string =>
+            (lv >= 1 ? `商店-${lv * META_UPGRADE_PER_LV.bargain}%` : '未解锁');
+        const describeSiege = (lv: number): string =>
+            (lv >= 1 ? `炮台+${lv * META_UPGRADE_PER_LV.siege}%` : '未解锁');
         const describers: Partial<Record<MetaUpgradeId, (lv: number) => string>> = {
             insight: describeInsight,
             boardLab: describeBoardLab,
             orbLab: describeOrbLab,
             forbiddenPack: describeForbidden,
+            bargain: describeBargain,
+            siege: describeSiege,
         };
         return UPGRADE_IDS.map((id) => ({
             id,

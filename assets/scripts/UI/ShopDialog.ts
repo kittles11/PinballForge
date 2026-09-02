@@ -9,6 +9,7 @@ import { AudioManager } from '../Core/AudioManager';
 import { Analytics } from '../Core/Analytics';
 import { OrbType } from '../Core/DataModels';
 import { Theme } from '../Core/ArtTheme';
+import { MetaManager } from '../Core/MetaManager';
 
 const { ccclass, property } = _decorator;
 
@@ -226,7 +227,7 @@ export class ShopDialog extends Component {
         }
         // 删卡阶梯涨价：首次 80，第二次 105，第三次 130 …（删卡成功 count++，下一张更贵）
         const price = this.removePrice();
-        const nextPrice = REMOVE_BASE_PRICE + (ShopDialog.removeCardCount + 1) * REMOVE_STEP_PRICE;
+        const nextPrice = this.finalPrice(REMOVE_BASE_PRICE + (ShopDialog.removeCardCount + 1) * REMOVE_STEP_PRICE);
         this.purchase(price, null, `🗑 已删除 1 颗普通球！（下一张 ${nextPrice}💰）`, () => {
             DeckManager.instance?.removeOrbFromDeck(OrbType.Normal);
             ShopDialog.removeCardCount++;
@@ -247,11 +248,17 @@ export class ShopDialog extends Component {
         return REMOVE_BASE_PRICE + ShopDialog.removeCardCount * REMOVE_STEP_PRICE;
     }
 
+    /** ⚒ meta「商道」：把基础价折算为实付价（折扣封顶 -40%），扣费与显示统一走此入口 */
+    private finalPrice(base: number): number {
+        return Math.max(1, Math.round(base * (1 - MetaManager.getBargainDiscount())));
+    }
+
     /**
      * 通用购买：校验金币 → 扣款 → 若给商品 ID 则标记该商品本波售罄 → 应用效果 → 播放音效 → 刷新。
      * 金币不足时不扣款，给出红色提示。
      */
     private purchase(price: number, soldId: string | null, successMsg: string, apply: () => void): void {
+        price = this.finalPrice(price); // 商道折扣：实付价（与 refreshUi 显示价一致）
         const gold = GoldManager.instance;
         if (!gold || gold.currentGold < price) {
             this.showMessage(`金币不足（需要 ${price}💰）！`, false);
@@ -304,15 +311,17 @@ export class ShopDialog extends Component {
         const deckSize = DeckManager.instance?.getDeckSize() ?? 0;
         const deckFull = deckSize >= deckCapacity;
         const deckFullSuffix = deckFull ? ` (${deckSize}/${deckCapacity})` : '';
-        // 闪电弹珠：限购 1 次，售罄则置灰售罄文案
-        this.refreshItemCard(this._buyLightning, ITEM_LIGHTNING, gold >= BUY_LIGHTNING_PRICE && !deckFull,
-            '⚡ 闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`, BUY_LIGHTNING_PRICE, deckFull);
+        // 闪电弹珠：限购 1 次，售罄则置灰售罄文案（价格经「商道」折扣，与 purchase 实付一致）
+        const pLight = this.finalPrice(BUY_LIGHTNING_PRICE);
+        this.refreshItemCard(this._buyLightning, ITEM_LIGHTNING, gold >= pLight && !deckFull,
+            '⚡ 闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`, pLight, deckFull);
         // 熔岩弹珠
-        this.refreshItemCard(this._buyLava, ITEM_LAVA, gold >= BUY_LAVA_PRICE && !deckFull,
-            '🌋 熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`, BUY_LAVA_PRICE, deckFull);
-        // 精简卡组：不限购，但需有普通球可删且金币充足；价格随删卡次数阶梯上涨
+        const pLava = this.finalPrice(BUY_LAVA_PRICE);
+        this.refreshItemCard(this._buyLava, ITEM_LAVA, gold >= pLava && !deckFull,
+            '🌋 熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`, pLava, deckFull);
+        // 精简卡组：不限购，但需有普通球可删且金币充足；价格随删卡次数阶梯上涨（同样吃商道折扣）
         const normalCount = DeckManager.instance?.getOrbCount(OrbType.Normal) ?? 0;
-        const removePrice = this.removePrice();
+        const removePrice = this.finalPrice(this.removePrice());
         this.setButtonEnabled(this._removeNormal, normalCount > 0 && gold >= removePrice);
         if (this._removeNormal?.label?.isValid) {
             this._removeNormal.label.string = '🗑 精简卡组';
@@ -329,8 +338,9 @@ export class ShopDialog extends Component {
         // 城堡维修：限购 1 次，城堡已毁或金币不足时置灰
         const castle = CastleController.instance;
         const castleAlive = !!castle && castle.currentHp > 0;
-        this.refreshItemCard(this._repairCastle, ITEM_REPAIR, castleAlive && gold >= REPAIR_CASTLE_PRICE,
-            '🏰 城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`, REPAIR_CASTLE_PRICE);
+        const pRepair = this.finalPrice(REPAIR_CASTLE_PRICE);
+        this.refreshItemCard(this._repairCastle, ITEM_REPAIR, castleAlive && gold >= pRepair,
+            '🏰 城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`, pRepair);
     }
 
     /**

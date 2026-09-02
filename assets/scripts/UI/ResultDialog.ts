@@ -52,8 +52,10 @@ export class ResultDialog extends Component {
     private _forgeRoot: Node | null = null;
     /** 碎片余额行 Label */
     private _shardsLabel: Label | null = null;
-    /** 三条升级行 Label（与 MetaManager.getUpgradeList() 顺序一致） */
+    /** 升级行 Label（与 MetaManager.getUpgradeList() 顺序一致） */
     private _rowLabels: Label[] = [];
+    /** 三列窄行紧凑模式：省略「效果」文案，仅显示 名称 Lv 价格 */
+    private _forgeCompact = false;
 
     protected onLoad(): void {
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
@@ -122,7 +124,7 @@ export class ResultDialog extends Component {
 
     // ---------- ⚒ 锻造区（纯代码构建，零 Inspector 配置；TutorialManager 同款模式） ----------
 
-    /** 幂等创建锻造区：碎片余额行 + 八条升级行（双列 4×4，整行可点购买） */
+    /** 幂等创建锻造区：碎片余额行 + 升级行（1/2/3 列自适应，整行可点购买） */
     private ensureForgeSection(): void {
         if (this._forgeRoot?.isValid) {
             return;
@@ -130,23 +132,30 @@ export class ResultDialog extends Component {
         const root = new Node('ForgeSection');
         root.addComponent(UITransform).setContentSize(520, 150);
         // 摆位（面板居中锚点）：落在 descLabel(y=40) 与 RestartButton(y=-140) 之间的 180px 带内。
-        // 解锁树 10 条 → 双列自适应（每列 ceil(n/2) 行）；行距按列行数动态收放保证不压按钮。
+        // 列数随升级条数自适应：≤4 单列 / ≤10 双列 / >10 三列（每列 ceil(n/cols) 行，行距收放保证不压按钮）。
         root.setPosition(0, -44, 0);
         this.node.addChild(root);
         this._forgeRoot = root;
 
         // 顶部：碎片余额（整行居中）
         this._shardsLabel = this.makeForgeRow(root, 0, 42, 17, FORGE_COLOR_SHARDS, 520);
-        // 十条升级：双列（前 ceil 半左列、余右列，与 getUpgradeList 树分支序一致），整行可点购买
+        // 升级行：按 getUpgradeList 树分支序分列（前段左 / 中段中 / 后段右），整行可点购买
         const list = MetaManager.getUpgradeList();
-        const perCol = Math.ceil(list.length / 2);
-        const spacing = perCol <= 4 ? 28 : 25;
+        const n = list.length;
+        const cols = n <= 4 ? 1 : n <= 10 ? 2 : 3;
+        const perCol = Math.ceil(n / cols);
+        const colX = cols === 1 ? [0] : cols === 2 ? [-128, 128] : [-170, 0, 170];
+        const rowW = cols === 3 ? 166 : 248;
+        const fs = cols === 3 ? 12 : 13;
+        const spacing = perCol <= 4 ? 30 : 25;
+        // 三列窄行放不下「效果」文案 → 紧凑模式仅显示 名称 Lv 价格（效果由名称+等级隐含）
+        this._forgeCompact = cols >= 3;
         this._rowLabels = list.map((u, i) => {
-            const col = i < perCol ? 0 : 1;
-            const row = col === 0 ? i : i - perCol;
-            const x = col === 0 ? -128 : 128;
+            const col = Math.floor(i / perCol);
+            const row = i % perCol;
+            const x = colX[col];
             const y = 14 - row * spacing;
-            const label = this.makeForgeRow(root, x, y, 13, Color.WHITE.clone(), 248);
+            const label = this.makeForgeRow(root, x, y, fs, Color.WHITE.clone(), rowW);
             label.node.on(Node.EventType.TOUCH_END, () => this.onForgeRowClick(u.id), this);
             return label;
         });
@@ -181,7 +190,7 @@ export class ResultDialog extends Component {
                 return;
             }
             const lv = MetaManager.getLv(u.id);
-            const effect = u.describe ? u.describe(lv) : `+${lv * u.perLv}`;
+            const effect = this._forgeCompact ? '' : (u.describe ? u.describe(lv) : `+${lv * u.perLv}`);
             if (!MetaManager.isUnlocked(u.id)) {
                 // 🌳 解锁树：子轨未达标 → 🔒 + 前置需求文案（规则对玩家可见，不靠猜）
                 const pre = u.prereq!;
@@ -192,10 +201,10 @@ export class ResultDialog extends Component {
             }
             const price = MetaManager.getPrice(u.id);
             if (price < 0) {
-                label.string = `${u.name} Lv${lv} ${effect} MAX`;
+                label.string = `${u.name} Lv${lv}${effect ? ' ' + effect : ''} MAX`;
                 label.color = FORGE_COLOR_MAXED;
             } else {
-                label.string = `${u.name} Lv${lv} ${effect} ⚒${price}`;
+                label.string = `${u.name} Lv${lv}${effect ? ' ' + effect : ''} ⚒${price}`;
                 label.color = MetaManager.canAfford(u.id) ? FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED;
             }
         });

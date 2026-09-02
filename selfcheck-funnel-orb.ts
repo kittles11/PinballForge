@@ -62,7 +62,7 @@ check('createBulletNode 按 orbType 四色分支（白/电光/火红/冰蓝）',
     && /orbType === OrbType\.Frost/.test(turret)
     && /orbType === OrbType\.Lava/.test(turret));
 check('命中结算透传珠子类型与漏斗语义 takeDamage(damage, orbType, false, funnelType)',
-    /target\.takeDamage\(data\.damage,\s*data\.orbType,\s*false,\s*data\.funnelType \?\? null\)/.test(turret));
+    /target\.takeDamage\((?:dmg|data\.damage),\s*data\.orbType,\s*false,\s*data\.funnelType \?\? null\)/.test(turret));
 check('弹体生成消费珠子类型 createBulletNode(data.orbType)',
     /this\.createBulletNode\(data\.orbType\)/.test(turret) && !/createBulletNode\(data\.type\)/.test(turret));
 check('炮塔对 funnelType 只透传不消费（弹体外观仍纯随 orbType，无漏斗倍率常量）',

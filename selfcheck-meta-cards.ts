@@ -73,23 +73,25 @@ check('洞察地板接线：Lv1+ 稀有地板、Lv3+ 追加史诗地板（enforc
     && /insight >= 1[\s\S]{0,80}enforceRarityFloor\(this\._currentRewards, pool, '稀有'\)/.test(reward)
     && /insight >= 3[\s\S]{0,80}enforceRarityFloor\(this\._currentRewards, pool, '史诗'\)/.test(reward));
 
-// ── ④ Meta 解锁树（行为真跑）：10 轨三条根深度链 ──
+// ── ④ Meta 解锁树（行为真跑）：12 轨三条根深度链 ──
 const LV = (o: Partial<Record<string, number>>): any =>
-    ({ castle: 0, orbCap: 0, boardLab: 0, startShield: 0, damage: 0, gold: 0, shard: 0, insight: 0, orbLab: 0, forbiddenPack: 0, ...o });
-check('META_PREREQS 树形：三根轨 null + orbCap←castle3 / boardLab←orbCap2 / startShield←castle2 / shard←gold3 / insight←damage3 / orbLab←damage2 / forbiddenPack←insight2',
+    ({ castle: 0, orbCap: 0, boardLab: 0, startShield: 0, siege: 0, damage: 0, gold: 0, shard: 0, bargain: 0, insight: 0, orbLab: 0, forbiddenPack: 0, ...o });
+check('META_PREREQS 树形：三根轨 null + orbCap←castle3 / boardLab←orbCap2 / startShield←castle2 / siege←castle4 / shard←gold3 / bargain←gold2 / insight←damage3 / orbLab←damage2 / forbiddenPack←insight2',
     META_PREREQS.castle === null && META_PREREQS.damage === null && META_PREREQS.gold === null
     && META_PREREQS.orbCap.id === 'castle' && META_PREREQS.orbCap.lv === 3
     && META_PREREQS.boardLab.id === 'orbCap' && META_PREREQS.boardLab.lv === 2
     && META_PREREQS.startShield.id === 'castle' && META_PREREQS.startShield.lv === 2
+    && META_PREREQS.siege.id === 'castle' && META_PREREQS.siege.lv === 4
     && META_PREREQS.shard.id === 'gold' && META_PREREQS.shard.lv === 3
+    && META_PREREQS.bargain.id === 'gold' && META_PREREQS.bargain.lv === 2
     && META_PREREQS.insight.id === 'damage' && META_PREREQS.insight.lv === 3
     && META_PREREQS.orbLab.id === 'damage' && META_PREREQS.orbLab.lv === 2
     && META_PREREQS.forbiddenPack.id === 'insight' && META_PREREQS.forbiddenPack.lv === 2);
 MetaManager.levels = LV({});
 MetaManager.shards = 99999;
-check('深度链初始全锁：castle/damage/gold Lv0 时七条子轨全未解锁',
-    !MetaManager.isUnlocked('orbCap') && !MetaManager.isUnlocked('boardLab') && !MetaManager.isUnlocked('startShield')
-    && !MetaManager.isUnlocked('shard') && !MetaManager.isUnlocked('insight') && !MetaManager.isUnlocked('orbLab') && !MetaManager.isUnlocked('forbiddenPack'));
+check('深度链初始全锁：castle/damage/gold Lv0 时九条子轨全未解锁',
+    !MetaManager.isUnlocked('orbCap') && !MetaManager.isUnlocked('boardLab') && !MetaManager.isUnlocked('startShield') && !MetaManager.isUnlocked('siege')
+    && !MetaManager.isUnlocked('shard') && !MetaManager.isUnlocked('bargain') && !MetaManager.isUnlocked('insight') && !MetaManager.isUnlocked('orbLab') && !MetaManager.isUnlocked('forbiddenPack'));
 check('未解锁拒绝购买（碎片充足也买不了 orbCap）', !MetaManager.buy('orbCap') && MetaManager.getLv('orbCap') === 0);
 // castle Lv2 → startShield；castle Lv3 → orbCap；orbCap Lv2 → boardLab（castle 双分支）
 MetaManager.levels = LV({ castle: 2 });
@@ -113,27 +115,40 @@ check('三级链：damage Lv3+insight Lv2 → forbiddenPack 解锁可买',
     MetaManager.isUnlocked('forbiddenPack') && MetaManager.buy('forbiddenPack') && MetaManager.getLv('forbiddenPack') === 1);
 check('canAfford 对未解锁子轨恒 false（shard 父轨 gold 未达标）',
     MetaManager.canAfford('shard') === false);
-check('getUpgradeList 返回十条且带 prereq/describe（四条 describe 子轨齐全）',
+// castle Lv4 → siege（攻城炮台）；gold Lv2 → bargain（商道）
+MetaManager.levels = LV({ castle: 4 });
+check('castle Lv4 → siege 解锁可买（攻城炮台，深分支）',
+    MetaManager.isUnlocked('siege') && MetaManager.buy('siege') && MetaManager.getLv('siege') === 1);
+MetaManager.levels = LV({ gold: 2 });
+check('gold Lv2 → bargain 解锁可买（商道）',
+    MetaManager.isUnlocked('bargain') && MetaManager.buy('bargain') && MetaManager.getLv('bargain') === 1);
+check('getUpgradeList 返回十二条且带 prereq/describe（六条 describe 子轨齐全）',
     (() => {
         const list = MetaManager.getUpgradeList();
         const byId = (id: string) => list.find((u: any) => u.id === id);
-        return list.length === 10
+        return list.length === 12
             && byId('castle').prereq === null
             && byId('orbCap').prereq !== null && byId('boardLab').prereq !== null && byId('forbiddenPack').prereq !== null
+            && byId('siege').prereq !== null && byId('bargain').prereq !== null
             && typeof byId('insight').describe === 'function'
             && typeof byId('boardLab').describe === 'function'
             && typeof byId('orbLab').describe === 'function'
-            && typeof byId('forbiddenPack').describe === 'function';
+            && typeof byId('forbiddenPack').describe === 'function'
+            && typeof byId('bargain').describe === 'function'
+            && typeof byId('siege').describe === 'function';
     })());
-check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；orbLab Lv1→等离子球；forbiddenPack Lv1→奇点 / Lv3→奇点+猎神',
+check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；orbLab Lv1→等离子 / Lv3→等离子+熔核；forbiddenPack Lv1→奇点 / Lv3→奇点+猎神；bargain/siege 百分比',
     (() => {
         const list = MetaManager.getUpgradeList();
         const bl = list.find((u: any) => u.id === 'boardLab').describe;
         const ol = list.find((u: any) => u.id === 'orbLab').describe;
         const fp = list.find((u: any) => u.id === 'forbiddenPack').describe;
+        const bg = list.find((u: any) => u.id === 'bargain').describe;
+        const sg = list.find((u: any) => u.id === 'siege').describe;
         return bl(1).includes('版型D') && !bl(1).includes('E') && bl(3).includes('D+E')
-            && ol(0).includes('未解锁') && ol(1).includes('等离子球')
-            && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神');
+            && ol(0).includes('未解锁') && ol(1).includes('等离子球') && ol(3).includes('熔核')
+            && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神')
+            && bg(2).includes('16') && sg(1).includes('20');
     })());
 
 // ── ⑤ 碎片加成 + enforceRarityFloor 纯函数 ──
@@ -193,8 +208,8 @@ check('战备护盾接线：CastleController.onLoad 套 getStartShieldBonus 到 
     /this\.shield \+= MetaManager\.getStartShieldBonus\(\)/.test(read('Battle', 'CastleController.ts')));
 check('getStartShieldBonus 行为：startShield Lv3 → +45',
     (() => { MetaManager.levels = LV({ startShield: 3 }); return MetaManager.getStartShieldBonus() === 45; })());
-check('跨局解锁卡数据：3 张专属卡（禁忌×2 + 等离子球×1），metaLock 各指自己子轨，复用既有 actionType',
-    META_UNLOCKED_CARDS.length === 3
+check('跨局解锁卡数据：4 张专属卡（禁忌×2 + 等离子球 + 熔核球），metaLock 各指自己子轨，复用既有 actionType',
+    META_UNLOCKED_CARDS.length === 4
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.track === 'forbiddenPack'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.lv === 1
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').actionType === 'BuffHeavy'
@@ -203,15 +218,19 @@ check('跨局解锁卡数据：3 张专属卡（禁忌×2 + 等离子球×1）�
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').metaLock.track === 'orbLab'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').metaLock.lv === 1
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').actionType === 'AddOrb'
-    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').orbType === 4);
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').orbType === 4
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').metaLock.track === 'orbLab'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').metaLock.lv === 3
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').actionType === 'AddOrb'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').orbType === 5);
 check('跨局卡默认不在 CARD_DATABASE（常规局抽不到，仅经对应子轨解锁并入池）',
-    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'orb_plasma'].includes(c.id)));
+    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'orb_plasma', 'orb_magma'].includes(c.id)));
 check('RewardDialog 按 metaLock 档位过滤并入跨局卡（getLv(track) >= lv）',
     /META_UNLOCKED_CARDS/.test(reward)
     && /!c\.metaLock \|\| MetaManager\.getLv\(c\.metaLock\.track as MetaUpgradeId\) >= c\.metaLock\.lv/.test(reward)
     && /\[\.\.\.REWARD_CARD_POOL, \.\.\.unlockedSpecials\]/.test(reward));
 
-// ── ⑦ 第 5 球种「等离子球」全分支接线安全网（新球种最易漏挂分支 → 逐项锁死） ──
+// ── ⑦ 第 5/6 球种「等离子球 / 熔核球」全分支接线安全网（新球种最易漏挂分支 → 逐项锁死） ──
 const { OrbType, OrbBalance: OB } = await import('./assets/scripts/Core/OrbBalance.ts');
 const { OrbType: OT } = await import('./assets/scripts/Core/DataModels.ts');
 const artTheme = strip(read('Core', 'ArtTheme.ts'));
@@ -240,6 +259,46 @@ check('EnemyController.takeDamage：铁甲格挡与 Boss 坚盾两处均放行 P
     && /this\._bulwarkLayers > 0 && !rawFloor && orbType !== OrbType\.Plasma/.test(enemy));
 check('DeckManager.ORB_TYPE_NAMES 补第 5 名（漏则选卡/日志显示 undefined）',
     /'等离子球'/.test(deckMgr));
+// —— 第 6 球种「熔核球」：走通用累积路径（无溅射分支），身份=超重重压 + 剥坚盾 3 层 ——
+check('OrbType.Magma = 5（枚举新增值，不与既有 0-4 冲突）', OT.Magma === 5);
+check('OrbBalance.configFor(Magma) 行为真跑：返回 magma 配置 baseDamage=45 pegEnergyGain=75（>熔岩 60）',
+    (() => {
+        const cfg = OB.configFor(OT.Magma);
+        return cfg === OB.magma && cfg.baseDamage === 45 && cfg.pegEnergyGain === 75;
+    })());
+check('熔核球为高阶奖励：每钉能量累积高于熔岩（75>60）且起始伤害更高（45>40）',
+    OB.magma.pegEnergyGain > OB.lava.pegEnergyGain && OB.magma.baseDamage > OB.lava.baseDamage);
+check('OrbBalance 全覆盖：applyMetaBonus 与 reset 均含 magma',
+    /this\.magma\.baseDamage = DEFAULT_MAGMA\.baseDamage \+ bonus/.test(OB_src())
+    && /Object\.assign\(this\.magma, DEFAULT_MAGMA\)/.test(OB_src()));
+check('ArtTheme 配色全覆盖：Theme.orb.magma + 拖尾[5] + 瞄准[5]',
+    /magma: hex\(C_MAGMA\)/.test(artTheme)
+    && /5: hex\(C_MAGMA\)/.test(artTheme)
+    && /5: hex\(C_MAGMA, 240\)/.test(artTheme));
+check('OrbController.initOrbType 有 Magma 分支 + 延迟密度重建含 Magma',
+    /type === OrbType\.Magma/.test(orbCtrl) && /Theme\.orb\.magma/.test(orbCtrl)
+    && /this\.orbType === OrbType\.Magma/.test(orbCtrl));
+check('EnemyController：熔核球剥坚盾 bulwarkPeelMagma=3 + 受击闪光 Magma',
+    /orbType === OrbType\.Magma/.test(enemy) && /bulwarkPeelMagma/.test(enemy)
+    && /case OrbType\.Magma/.test(enemy));
+check('DataModels：bulwarkPeelMagma=3', /bulwarkPeelMagma: 3/.test(strip(read('Core', 'DataModels.ts'))));
+check('DeckManager.ORB_TYPE_NAMES 补第 6 名 + DeckViewDialog 图例含熔核球',
+    /'熔核球'/.test(deckMgr) && /OrbType\.Magma/.test(strip(read('UI', 'DeckViewDialog.ts'))));
+// —— ③ 新数值轨接线：商道（ShopDialog）+ 攻城炮台（TurretController） ——
+check('商道接线：ShopDialog 经 finalPrice 统一扣费与显示（乘 1 - getBargainDiscount）',
+    /MetaManager\.getBargainDiscount\(\)/.test(strip(read('UI', 'ShopDialog.ts')))
+    && /price = this\.finalPrice\(price\)/.test(strip(read('UI', 'ShopDialog.ts'))));
+check('getBargainDiscount 行为：bargain Lv2 → 0.16，Lv5 → 封顶 0.40',
+    (() => {
+        MetaManager.levels = LV({ bargain: 2 });
+        const a = Math.abs(MetaManager.getBargainDiscount() - 0.16) < 1e-9;
+        MetaManager.levels = LV({ bargain: 5 });
+        return a && Math.abs(MetaManager.getBargainDiscount() - 0.40) < 1e-9;
+    })());
+check('攻城炮台接线：TurretController 子弹伤害乘 (1 + getSiegeBonus)',
+    /MetaManager\.getSiegeBonus\(\)/.test(strip(read('Battle', 'TurretController.ts'))));
+check('getSiegeBonus 行为：siege Lv3 → 0.60',
+    (() => { MetaManager.levels = LV({ siege: 3 }); return Math.abs(MetaManager.getSiegeBonus() - 0.60) < 1e-9; })());
 
 console.log(failed === 0 ? '\n✅ 应答卡 + Meta 解锁树自检全部通过' : `\n❌ ${failed} 项未通过`);
 if (failed > 0) process.exit(1);

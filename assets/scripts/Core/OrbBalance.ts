@@ -28,7 +28,7 @@ export interface FrostConfig extends OrbConfig {
     freezeVulnerability: number;
 }
 
-export interface PlasmaConfig extends OrbConfig {
+export interface HeavyOrbConfig extends OrbConfig {
     scale: number;
     gravityScale: number;
     density: number;
@@ -77,12 +77,22 @@ const DEFAULT_FROST: FrostConfig = {
 // 🌳 等离子球（Meta 球种工坊解锁）：无视护盾是签名机制（在 EnemyController.takeDamage 兑现）。
 //   代价是伤害吞吐更低：起始 30（< 普通 40）、每钉 +12（< 普通 15）→ 对无盾敌人明显弱于普通球，
 //   对铁甲格挡 / Boss 坚盾则远强（直接透传）。是「针对护盾波次的特化选择」，非全面上位（防严格占优）。
-const DEFAULT_PLASMA: PlasmaConfig = {
+const DEFAULT_PLASMA: HeavyOrbConfig = {
     baseDamage: 30,
     pegEnergyGain: 12,
     scale: 1.15,
     gravityScale: 1.3,
     density: 1.3,
+};
+
+// 🌳 熔核球（Meta 球种工坊 Lv3 高阶解锁）：走通用累积路径（无溅射分支），身份=超重重压 + 高能量 +
+//   剥坚盾 3 层（EnemyController 兑现）。每钉 +75（> 熔岩 60）→ 单发重球砸穿 Boss；作为高阶 meta 奖励。
+const DEFAULT_MAGMA: HeavyOrbConfig = {
+    baseDamage: 45,
+    pegEnergyGain: 75,
+    scale: 1.5,
+    gravityScale: 2.4,
+    density: 2.4,
 };
 
 /**
@@ -94,7 +104,8 @@ export class OrbBalance {
     static readonly lightning: LightningConfig = { ...DEFAULT_LIGHTNING };
     static readonly lava: LavaConfig = { ...DEFAULT_LAVA };
     static readonly frost: FrostConfig = { ...DEFAULT_FROST };
-    static readonly plasma: PlasmaConfig = { ...DEFAULT_PLASMA };
+    static readonly plasma: HeavyOrbConfig = { ...DEFAULT_PLASMA };
+    static readonly magma: HeavyOrbConfig = { ...DEFAULT_MAGMA };
 
     /** Normal 的轻量连续撞击奖励；保持其基础定位，不与特殊球争夺强度。 */
     static readonly normalComboThreshold = 5;
@@ -125,6 +136,7 @@ export class OrbBalance {
                 this.lightning.baseDamage += value;
                 this.lava.baseDamage += value;
                 this.plasma.baseDamage += value;
+                this.magma.baseDamage += value;
                 break;
             case 'peg_multiplier':
                 this.pegMultiplier += value;
@@ -145,7 +157,7 @@ export class OrbBalance {
 
     /**
      * 永久升级（meta「弹珠打磨」）伤害加成：赋值式（默认值 + 加成，幂等可重复调用），
-     * 五种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
+     * 六种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
      * 调用时机：DeckManager.onLoad（场景首局）与 reset() 末尾（重开一局），两处都套保证任何起点都生效。
      */
     static applyMetaBonus(): void {
@@ -155,6 +167,7 @@ export class OrbBalance {
         this.lava.baseDamage = DEFAULT_LAVA.baseDamage + bonus;
         this.frost.baseDamage = DEFAULT_FROST.baseDamage + bonus;
         this.plasma.baseDamage = DEFAULT_PLASMA.baseDamage + bonus;
+        this.magma.baseDamage = DEFAULT_MAGMA.baseDamage + bonus;
     }
 
     /**
@@ -178,6 +191,7 @@ export class OrbBalance {
         Object.assign(this.lava, DEFAULT_LAVA);
         Object.assign(this.frost, DEFAULT_FROST);
         Object.assign(this.plasma, DEFAULT_PLASMA);
+        Object.assign(this.magma, DEFAULT_MAGMA);
         this.pegMultiplier = 1;
         this.funnelBonus = 0;
         this.lavaAreaSplashEnabled = false;
@@ -198,6 +212,9 @@ export class OrbBalance {
         }
         if (type === OrbType.Plasma) {
             return this.plasma;
+        }
+        if (type === OrbType.Magma) {
+            return this.magma;
         }
         return this.normal;
     }

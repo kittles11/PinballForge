@@ -7,6 +7,7 @@ import { EnemyManager } from './EnemyManager';
 import { EnemyController } from './EnemyController';
 import { OrbType, FunnelType } from '../Core/DataModels';
 import { orbTrailColor, Theme } from '../Core/ArtTheme';
+import { MetaManager } from '../Core/MetaManager';
 import { RuntimeTex } from '../Core/RuntimeTex';
 import { FxManager } from '../Core/FxManager';
 
@@ -142,7 +143,9 @@ export class TurretController extends Component {
                 //   修复「隔空打怪」：旧逻辑到达时重新 resolveTarget，可能命中与瞄准不同的另一只敌人
                 if (target?.node?.isValid && !target.isDead) {
                     // funnelType 透传：Boss「破阵坚盾」按入槽漏斗做剥盾判定（普通怪无感）
-                    target.takeDamage(data.damage, data.orbType, false, data.funnelType ?? null);
+                    // ⚒ meta「攻城炮台」：炮塔子弹伤害按等级加成（siegeBonus = Lv × 20%）
+                    const dmg = Math.round(data.damage * (1 + MetaManager.getSiegeBonus()));
+                    target.takeDamage(dmg, data.orbType, false, data.funnelType ?? null);
                     // ★ 命中火花：跟随珠子类型色
                     FxManager.spark(target.node.worldPosition, orbTrailColor(data.orbType), 3);
                 }
@@ -175,6 +178,9 @@ export class TurretController extends Component {
         } else if (orbType === OrbType.Plasma) {
             color = Theme.orb.plasma; // 等离紫弹
             radius = 13;
+        } else if (orbType === OrbType.Magma) {
+            color = Theme.orb.magma; // 熔核洋红大弹
+            radius = 17;
         } else {
             color = Theme.orb.normal; // #FFFFFF 普通银白
             radius = 10;

@@ -45,6 +45,8 @@ export enum OrbType {
     Frost = 3,
     /** 🌳 等离子球（Meta「球种工坊」跨局解锁）：略重高能球，无视铁甲格挡与 Boss 坚盾；基础伤害偏低作为权衡 */
     Plasma = 4,
+    /** 🌳 熔核球（Meta「球种工坊」Lv3 高阶解锁）：超重重压球，撞钉高能量累积 + 剥坚盾 3 层，终极反甲/反 Boss 球 */
+    Magma = 5,
 }
 
 /** 钉子类型 */
@@ -187,6 +189,7 @@ export const BOSS_BEHAVIOR_STATS = {
     bulwarkDamageMult: 0.5,
     bulwarkPeelHeavy: 1,
     bulwarkPeelLava: 2,
+    bulwarkPeelMagma: 3,
     // 护栏：同屏敌人达该软上限时诏令静默跳过（防史莱姆分裂 + 召唤叠加失控）
     onScreenCap: 10,
 };
@@ -549,6 +552,11 @@ export const META_UNLOCKED_CARDS: CardData[] = [
         id: 'orb_plasma', title: '等离子球', archetype: CardArchetype.Universal, rarity: '史诗',
         desc: '【工坊·跨局解锁】获得 1 颗【等离子球】：略重高能，无视铁甲格挡与 Boss 坚盾（基础伤害偏低）。',
         actionType: 'AddOrb', orbType: OrbType.Plasma, metaLock: { track: 'orbLab', lv: 1 },
+    },
+    {
+        id: 'orb_magma', title: '熔核球', archetype: CardArchetype.Lava, rarity: '史诗',
+        desc: '【工坊·高阶解锁】获得 1 颗【熔核球】：超重重压，撞钉能量累积极高并剥 Boss 坚盾 3 层——终极反甲重球。',
+        actionType: 'AddOrb', orbType: OrbType.Magma, metaLock: { track: 'orbLab', lv: 3 },
     },
 ];
 

@@ -367,6 +367,10 @@ export class AudioManager {
             // 等离子：上扬能量嗡鸣（sine 上扫 + 高次泛音，区别于其它球种）
             AudioManager.playTone('sine', 300, 0.4, 0.2, { endFreq: 1200 });
             AudioManager.playTone('sine', 600, 0.3, 0.1, { endFreq: 2400, delay: 0.03 });
+        } else if (type === OrbType.Magma) {
+            // 熔核：比熔岩更沉的超重轰鸣（更低频三角波 + 次声打底）
+            AudioManager.playTone('triangle', 95, 0.6, 0.5, { endFreq: 32 });
+            AudioManager.playTone('sine', 48, 0.65, 0.42, { endFreq: 22 });
         } else {
             // 普通：轻量弹射叮声（复用直播池降级合成音，音色与撞钉一致）
             AudioManager.playSynthDing(1);

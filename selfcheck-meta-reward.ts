@@ -101,13 +101,16 @@ check('showResult 发放碎片：grantRunReward(章节, 关卡, isWin)',
 check('发放防重标志 _rewardGranted（一次结算只发一次）', /if \(!this\._rewardGranted\)/.test(result));
 check('锻造区幂等创建 ensureForgeSection + 刷新 refreshForge',
     /this\.ensureForgeSection\(\);/.test(result) && /this\.refreshForge\(\);/.test(result));
-check('锻造区十条升级来自 getUpgradeList（整行可点 onForgeRowClick → MetaManager.buy）',
+check('锻造区十二条升级来自 getUpgradeList（整行可点 onForgeRowClick → MetaManager.buy）',
     /const list = MetaManager\.getUpgradeList\(\);/.test(result)
     && /\.map\(\(u, i\) =>/.test(result)
     && /private onForgeRowClick\(id: MetaUpgradeId\): void/.test(result)
     && /MetaManager\.buy\(id\)/.test(result));
-check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（10 轨双列自适应，root y=-44）',
+check('锻造区摆位在 descLabel(y=40) 与 RestartButton(y=-140) 之间（12 轨三列自适应，root y=-44）',
     /setPosition\(0, -44, 0\)/.test(result));
+check('锻造区列数自适应：≤4 单列 / ≤10 双列 / >10 三列（cols 三元）',
+    /cols = n <= 4 \? 1 : n <= 10 \? 2 : 3/.test(result)
+    && /const perCol = Math\.ceil\(n \/ cols\)/.test(result));
 check('可买金色 / 不可买灰 / 满级暗灰（颜色反馈三态）',
     /FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED/.test(result) && /FORGE_COLOR_MAXED/.test(result));
 

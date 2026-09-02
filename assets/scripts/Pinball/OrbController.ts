@@ -144,8 +144,8 @@ export class OrbController extends Component {
         // initOrbType 幂等：发射路径已调用则无副作用；统一无条件补一次，
         // 保证任何来源的球（含场景直放的普通球）都拿到一致的主题样式（白体 / glow / 拖尾）。
         this.initOrbType(this.orbType);
-        if (this.orbType === OrbType.Lava || this.orbType === OrbType.Plasma) {
-            // 重质球（熔岩 / 等离子）密度重建延迟一帧执行，绕开物理 step 锁，100% 生效
+        if (this.orbType === OrbType.Lava || this.orbType === OrbType.Plasma || this.orbType === OrbType.Magma) {
+            // 重质球（熔岩 / 等离子 / 熔核）密度重建延迟一帧执行，绕开物理 step 锁，100% 生效
             this.scheduleOnce(() => this.applyHeavyDensity(), 0);
         }
 
@@ -228,6 +228,20 @@ export class OrbController extends Component {
                 collider.density = OrbBalance.plasma.density;
             }
             this.node.name = 'PlasmaOrb';
+        } else if (type === OrbType.Magma) {
+            // 🌳 熔核球：洋红 + 超重重压（高能量累积 + 剥坚盾 3 层，在 EnemyController 兑现）
+            if (sp) {
+                sp.color = Theme.orb.magma;
+            }
+            this.node.setScale(new Vec3(OrbBalance.magma.scale, OrbBalance.magma.scale, 1));
+            if (rb) {
+                rb.gravityScale = OrbBalance.magma.gravityScale;
+            }
+            const collider = this.getComponent(Collider2D);
+            if (collider) {
+                collider.density = OrbBalance.magma.density;
+            }
+            this.node.name = 'MagmaOrb';
         } else if (type === OrbType.Normal) {
             if (sp) {
                 // ★ 美术修复：普通球本体此前沿用 Prefab 烘焙的 #2DACE7 蓝，
@@ -308,7 +322,7 @@ export class OrbController extends Component {
         if (glowSp?.isValid) {
             glowSp.color = tint;
         }
-        const glowSize = type === OrbType.Lava ? 62 : type === OrbType.Plasma ? 56 : 52;
+        const glowSize = type === OrbType.Lava ? 62 : type === OrbType.Magma ? 66 : type === OrbType.Plasma ? 56 : 52;
         glow.getComponent(UITransform)?.setContentSize(glowSize, glowSize);
         // ② 左上高光点（镜面反射小亮斑）
         let dot = this.node.getChildByName('OrbHighlight');
