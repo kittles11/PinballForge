@@ -536,8 +536,9 @@ export const CARD_DATABASE: CardData[] = [
 
 /**
  * 🌳 Meta 跨局解锁卡：默认【不】进抽卡池，仅当 metaLock 指向的子轨达到档位后，
- * 由 RewardDialog 并入卡池。承载「跨局解锁新内容」的目标感——禁忌卡包（forbiddenPack）与
- * 球种工坊（orbLab）各挂自己的专属卡。均复用既有 actionType（零新结算钩子）。
+ * 由 RewardDialog 并入卡池。承载「跨局解锁新内容」的目标感——禁忌卡包（forbiddenPack：Lv1 奇点 /
+ * Lv3 猎神 / Lv5 不朽要塞）与球种工坊（orbLab：Lv1 等离子 / Lv3 熔核 / Lv5 吸血球）各挂三档专属卡。
+ * 均复用既有 actionType（零新结算钩子）。
  */
 export const META_UNLOCKED_CARDS: CardData[] = [
     {
@@ -549,6 +550,11 @@ export const META_UNLOCKED_CARDS: CardData[] = [
         id: 'forb_godslayer', title: '猎神契约', archetype: CardArchetype.Universal, rarity: '史诗',
         desc: '【禁忌·跨局解锁】对精英（带词缀）与章节 Boss 的伤害提升 100%。',
         actionType: 'AntiElite', value: 1.0, metaLock: { track: 'forbiddenPack', lv: 3 },
+    },
+    {
+        id: 'forb_immortal', title: '不朽要塞', archetype: CardArchetype.Universal, rarity: '史诗',
+        desc: '【禁忌·封顶解锁】本局要塞生命上限 +80——攻（奇点）· 杀（猎神）· 守（不朽）三轴禁忌的最后一块。',
+        actionType: 'MaxHp', value: 80, metaLock: { track: 'forbiddenPack', lv: 5 },
     },
     {
         id: 'orb_plasma', title: '等离子球', archetype: CardArchetype.Universal, rarity: '史诗',

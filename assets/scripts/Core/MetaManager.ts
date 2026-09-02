@@ -350,7 +350,7 @@ class MetaManagerClass {
         const describeOrbLab = (lv: number): string =>
             (lv >= 5 ? '等离子+熔核+吸血' : lv >= 3 ? '等离子+熔核' : lv >= 1 ? '解锁等离子球' : '未解锁');
         const describeForbidden = (lv: number): string =>
-            (lv >= 3 ? '奇点+猎神' : lv >= 1 ? '聚能奇点' : '未解锁');
+            (lv >= 5 ? '奇点+猎神+不朽' : lv >= 3 ? '奇点+猎神' : lv >= 1 ? '聚能奇点' : '未解锁');
         const describeBargain = (lv: number): string =>
             (lv >= 1 ? `商店-${lv * META_UPGRADE_PER_LV.bargain}%` : '未解锁');
         const describeSiege = (lv: number): string =>

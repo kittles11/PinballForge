@@ -10,6 +10,7 @@ import { orbTrailColor, Theme } from '../Core/ArtTheme';
 import { MetaManager } from '../Core/MetaManager';
 import { OrbBalance } from '../Core/OrbBalance';
 import { CastleController } from './CastleController';
+import { FloatingTextManager } from '../Core/FloatingTextManager';
 import { RuntimeTex } from '../Core/RuntimeTex';
 import { FxManager } from '../Core/FxManager';
 
@@ -153,6 +154,10 @@ export class TurretController extends Component {
                         const heal = Math.round(dmg * OrbBalance.leechHealRatio);
                         if (heal > 0) {
                             CastleController.instance?.heal(heal);
+                            // 回血飘字：翠绿「+N ❤」从命中敌人处升起（吸血反馈可视化）
+                            FloatingTextManager.instance?.showText(
+                                `+${heal} ❤`, target.node.worldPosition, Theme.orb.leech, false,
+                            );
                         }
                     }
                     // ★ 命中火花：跟随珠子类型色

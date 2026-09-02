@@ -147,7 +147,7 @@ check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；orbLab
         const sg = list.find((u: any) => u.id === 'siege').describe;
         return bl(1).includes('版型D') && !bl(1).includes('E') && bl(3).includes('D+E')
             && ol(0).includes('未解锁') && ol(1).includes('等离子球') && ol(3).includes('熔核') && !ol(3).includes('吸血') && ol(5).includes('吸血')
-            && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神')
+            && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神') && !fp(3).includes('不朽') && fp(5).includes('不朽')
             && bg(2).includes('16') && sg(1).includes('20');
     })());
 
@@ -208,13 +208,17 @@ check('战备护盾接线：CastleController.onLoad 套 getStartShieldBonus 到 
     /this\.shield \+= MetaManager\.getStartShieldBonus\(\)/.test(read('Battle', 'CastleController.ts')));
 check('getStartShieldBonus 行为：startShield Lv3 → +45',
     (() => { MetaManager.levels = LV({ startShield: 3 }); return MetaManager.getStartShieldBonus() === 45; })());
-check('跨局解锁卡数据：5 张专属卡（禁忌×2 + 等离子/熔核/吸血球），metaLock 各指自己子轨，复用既有 actionType',
-    META_UNLOCKED_CARDS.length === 5
+check('跨局解锁卡数据：6 张专属卡（禁忌×3 + 球种×3），metaLock 各指自己子轨，复用既有 actionType',
+    META_UNLOCKED_CARDS.length === 6
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.track === 'forbiddenPack'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.lv === 1
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').actionType === 'BuffHeavy'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_godslayer').metaLock.lv === 3
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_godslayer').actionType === 'AntiElite'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_immortal').metaLock.track === 'forbiddenPack'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_immortal').metaLock.lv === 5
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_immortal').actionType === 'MaxHp'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_immortal').value === 80
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').metaLock.track === 'orbLab'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').metaLock.lv === 1
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_plasma').actionType === 'AddOrb'
@@ -228,7 +232,7 @@ check('跨局解锁卡数据：5 张专属卡（禁忌×2 + 等离子/熔核/吸
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_leech').actionType === 'AddOrb'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_leech').orbType === 6);
 check('跨局卡默认不在 CARD_DATABASE（常规局抽不到，仅经对应子轨解锁并入池）',
-    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'orb_plasma', 'orb_magma', 'orb_leech'].includes(c.id)));
+    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'forb_immortal', 'orb_plasma', 'orb_magma', 'orb_leech'].includes(c.id)));
 check('RewardDialog 按 metaLock 档位过滤并入跨局卡（getLv(track) >= lv）',
     /META_UNLOCKED_CARDS/.test(reward)
     && /!c\.metaLock \|\| MetaManager\.getLv\(c\.metaLock\.track as MetaUpgradeId\) >= c\.metaLock\.lv/.test(reward)
@@ -313,6 +317,9 @@ check('TurretController：Leech 命中后按 leechHealRatio 治疗城堡（单�
     /data\.orbType === OrbType\.Leech/.test(strip(read('Battle', 'TurretController.ts')))
     && /CastleController\.instance\?\.heal\(heal\)/.test(strip(read('Battle', 'TurretController.ts')))
     && /dmg \* OrbBalance\.leechHealRatio/.test(strip(read('Battle', 'TurretController.ts'))));
+check('TurretController：Leech 回血附带翠绿飘字（FloatingTextManager.showText + Theme.orb.leech）',
+    /FloatingTextManager\.instance\?\.showText\(/.test(strip(read('Battle', 'TurretController.ts')))
+    && /Theme\.orb\.leech/.test(strip(read('Battle', 'TurretController.ts'))));
 check('EnemyController：吸血球受击闪光 case OrbType.Leech',
     /case OrbType\.Leech/.test(enemy));
 check('DeckManager.ORB_TYPE_NAMES 补第 7 名 + DeckViewDialog 图例含吸血球',
