@@ -504,6 +504,10 @@ export class EnemyController extends Component {
                 // 🌳 熔核球：身体闪洋红重光（💥 重压命中反馈）
                 this.flashHit(Theme.orb.magma);
                 break;
+            case OrbType.Leech:
+                // 🌳 吸血球：身体闪翠绿光（回血命中反馈）
+                this.flashHit(Theme.orb.leech);
+                break;
             default:
                 // 普通 / 金币弹：标准白闪（金币已改为入槽即发，见 OrbController.triggerFunnelAndDestroy，此处不再发放防重复）
                 this.flashHit(Color.WHITE);

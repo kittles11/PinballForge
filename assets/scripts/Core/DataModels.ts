@@ -47,6 +47,8 @@ export enum OrbType {
     Plasma = 4,
     /** 🌳 熔核球（Meta「球种工坊」Lv3 高阶解锁）：超重重压球，撞钉高能量累积 + 剥坚盾 3 层，终极反甲/反 Boss 球 */
     Magma = 5,
+    /** 🌳 吸血球（Meta「球种工坊」Lv5 封顶解锁）：入槽造成伤害后按倍率治疗城堡，续航球（不改伤害分配） */
+    Leech = 6,
 }
 
 /** 钉子类型 */
@@ -557,6 +559,11 @@ export const META_UNLOCKED_CARDS: CardData[] = [
         id: 'orb_magma', title: '熔核球', archetype: CardArchetype.Lava, rarity: '史诗',
         desc: '【工坊·高阶解锁】获得 1 颗【熔核球】：超重重压，撞钉能量累积极高并剥 Boss 坚盾 3 层——终极反甲重球。',
         actionType: 'AddOrb', orbType: OrbType.Magma, metaLock: { track: 'orbLab', lv: 3 },
+    },
+    {
+        id: 'orb_leech', title: '吸血球', archetype: CardArchetype.Universal, rarity: '史诗',
+        desc: '【工坊·封顶解锁】获得 1 颗【吸血球】：入槽造成伤害后治疗城堡（伤害的 25% 转为要塞护盾/生命）——续航之球。',
+        actionType: 'AddOrb', orbType: OrbType.Leech, metaLock: { track: 'orbLab', lv: 5 },
     },
 ];
 

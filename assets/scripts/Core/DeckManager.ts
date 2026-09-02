@@ -19,8 +19,8 @@ const ORB_TYPE_LIGHTNING = 1;
 const ORB_TYPE_LAVA = 2;
 const ORB_TYPE_FROST = 3;
 
-/** 类型编号 → 显示名（用于 DeckLabel 与日志）：0 普通 / 1 雷球 / 2 熔岩 / 3 冰霜 / 4 等离子 / 5 熔核 */
-const ORB_TYPE_NAMES: string[] = ['普通弹珠', '闪电弹珠', '熔岩弹珠', '冰霜弹珠', '等离子球', '熔核球'];
+/** 类型编号 → 显示名（用于 DeckLabel 与日志）：0 普通 / 1 雷球 / 2 熔岩 / 3 冰霜 / 4 等离子 / 5 熔核 / 6 吸血 */
+const ORB_TYPE_NAMES: string[] = ['普通弹珠', '闪电弹珠', '熔岩弹珠', '冰霜弹珠', '等离子球', '熔核球', '吸血球'];
 
 /** 初始卡组构成（纯类型编号，无需任何 Prefab 绑定）：3 普通 + 1 雷球 + 1 熔岩 + 1 冰，固定 6 颗 */
 const INITIAL_DECK_TYPES: number[] = [

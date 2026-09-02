@@ -56,6 +56,10 @@ export class ResultDialog extends Component {
     private _rowLabels: Label[] = [];
     /** 三列窄行紧凑模式：省略「效果」文案，仅显示 名称 Lv 价格 */
     private _forgeCompact = false;
+    /** 解锁总览预览模式：行文案显示「效果/解锁内容」而非价格，点击不购买 */
+    private _forgePreview = false;
+    /** 预览/购买切换按钮 Label */
+    private _forgeToggle: Label | null = null;
 
     protected onLoad(): void {
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
@@ -139,6 +143,10 @@ export class ResultDialog extends Component {
 
         // 顶部：碎片余额（整行居中）
         this._shardsLabel = this.makeForgeRow(root, 0, 42, 17, FORGE_COLOR_SHARDS, 520);
+        // 头部右侧：解锁总览切换按钮（📖 看效果 / 💰 购买），复用行节点仅换文案，不动布局
+        this._forgeToggle = this.makeForgeRow(root, 210, 42, 13, FORGE_COLOR_SHARDS, 100);
+        this._forgeToggle.string = '📖 总览';
+        this._forgeToggle.node.on(Node.EventType.TOUCH_END, () => this.toggleForgePreview(), this);
         // 升级行：按 getUpgradeList 树分支序分列（前段左 / 中段中 / 后段右），整行可点购买
         const list = MetaManager.getUpgradeList();
         const n = list.length;
@@ -178,7 +186,7 @@ export class ResultDialog extends Component {
         return label;
     }
 
-    /** 刷新锻造区文案与配色：可买金色 / 钱不够灰色 / 满级暗灰 / 🔒 未解锁灰色带前置说明（双列紧凑文案） */
+    /** 刷新锻造区文案与配色：购买模式（名称 Lv 价格）/ 预览模式（名称·效果，🔒 显示前置） */
     private refreshForge(): void {
         if (this._shardsLabel?.isValid) {
             this._shardsLabel.string = `⚒ 精铸碎片 ${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
@@ -190,16 +198,25 @@ export class ResultDialog extends Component {
                 return;
             }
             const lv = MetaManager.getLv(u.id);
-            const effect = this._forgeCompact ? '' : (u.describe ? u.describe(lv) : `+${lv * u.perLv}`);
             if (!MetaManager.isUnlocked(u.id)) {
                 // 🌳 解锁树：子轨未达标 → 🔒 + 前置需求文案（规则对玩家可见，不靠猜）
                 const pre = u.prereq!;
                 const preName = list.find((x) => x.id === pre.id)?.name ?? pre.id;
-                label.string = `🔒${u.name} 需${preName}${pre.lv}级`;
+                label.string = this._forgePreview
+                    ? `🔒${u.name}·需${preName}${pre.lv}`
+                    : `🔒${u.name} 需${preName}${pre.lv}级`;
                 label.color = FORGE_COLOR_LOCKED;
                 return;
             }
             const price = MetaManager.getPrice(u.id);
+            if (this._forgePreview) {
+                // 预览模式：显示「效果/已解锁内容」（describe 或 +数值），不显示价格
+                const effect = u.describe ? u.describe(lv) : `+${lv * u.perLv}`;
+                label.string = price < 0 ? `${u.name}·${effect} MAX` : `${u.name}·${effect}`;
+                label.color = price < 0 ? FORGE_COLOR_MAXED : FORGE_COLOR_BUYABLE;
+                return;
+            }
+            const effect = this._forgeCompact ? '' : (u.describe ? u.describe(lv) : `+${lv * u.perLv}`);
             if (price < 0) {
                 label.string = `${u.name} Lv${lv}${effect ? ' ' + effect : ''} MAX`;
                 label.color = FORGE_COLOR_MAXED;
@@ -210,8 +227,20 @@ export class ResultDialog extends Component {
         });
     }
 
-    /** 点击升级行：买得起则扣费升级并刷新，否则忽略（颜色已示意不可买） */
+    /** 切换「解锁总览预览 ↔ 购买」模式：仅换行文案与按钮标签，不动布局与触摸绑定 */
+    private toggleForgePreview(): void {
+        this._forgePreview = !this._forgePreview;
+        if (this._forgeToggle?.isValid) {
+            this._forgeToggle.string = this._forgePreview ? '💰 购买' : '📖 总览';
+        }
+        this.refreshForge();
+    }
+
+    /** 点击升级行：预览模式不响应；购买模式下买得起则扣费升级并刷新，否则忽略（颜色已示意不可买） */
     private onForgeRowClick(id: MetaUpgradeId): void {
+        if (this._forgePreview) {
+            return;
+        }
         if (!MetaManager.buy(id)) {
             return;
         }

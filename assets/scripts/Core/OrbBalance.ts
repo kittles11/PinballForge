@@ -95,6 +95,13 @@ const DEFAULT_MAGMA: HeavyOrbConfig = {
     density: 2.4,
 };
 
+// 🌳 吸血球（Meta 球种工坊 Lv5 封顶解锁）：普通物理（非重球），身份=续航——入槽造成伤害后按
+//   leechHealRatio 治疗城堡（TurretController 命中后兑现）。伤害中庸，价值全在续航延长局数。
+const DEFAULT_LEECH: OrbConfig = {
+    baseDamage: 40,
+    pegEnergyGain: 18,
+};
+
 /**
  * 统一的弹珠配置入口。
  * 当前奖励不要求接入全部升级，但未来可通过 applyUpgrade() 跨波次修改这些运行时值。
@@ -106,6 +113,10 @@ export class OrbBalance {
     static readonly frost: FrostConfig = { ...DEFAULT_FROST };
     static readonly plasma: HeavyOrbConfig = { ...DEFAULT_PLASMA };
     static readonly magma: HeavyOrbConfig = { ...DEFAULT_MAGMA };
+    static readonly leech: OrbConfig = { ...DEFAULT_LEECH };
+
+    /** 吸血球回血倍率：入槽伤害 × 此值治疗城堡（封顶 meta 奖励，需真机校准） */
+    static readonly leechHealRatio = 0.25;
 
     /** Normal 的轻量连续撞击奖励；保持其基础定位，不与特殊球争夺强度。 */
     static readonly normalComboThreshold = 5;
@@ -137,6 +148,7 @@ export class OrbBalance {
                 this.lava.baseDamage += value;
                 this.plasma.baseDamage += value;
                 this.magma.baseDamage += value;
+                this.leech.baseDamage += value;
                 break;
             case 'peg_multiplier':
                 this.pegMultiplier += value;
@@ -157,7 +169,7 @@ export class OrbBalance {
 
     /**
      * 永久升级（meta「弹珠打磨」）伤害加成：赋值式（默认值 + 加成，幂等可重复调用），
-     * 六种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
+     * 七种球全覆盖（含 applyUpgrade('base_damage') 未覆盖的 frost）。
      * 调用时机：DeckManager.onLoad（场景首局）与 reset() 末尾（重开一局），两处都套保证任何起点都生效。
      */
     static applyMetaBonus(): void {
@@ -168,6 +180,7 @@ export class OrbBalance {
         this.frost.baseDamage = DEFAULT_FROST.baseDamage + bonus;
         this.plasma.baseDamage = DEFAULT_PLASMA.baseDamage + bonus;
         this.magma.baseDamage = DEFAULT_MAGMA.baseDamage + bonus;
+        this.leech.baseDamage = DEFAULT_LEECH.baseDamage + bonus;
     }
 
     /**
@@ -192,6 +205,7 @@ export class OrbBalance {
         Object.assign(this.frost, DEFAULT_FROST);
         Object.assign(this.plasma, DEFAULT_PLASMA);
         Object.assign(this.magma, DEFAULT_MAGMA);
+        Object.assign(this.leech, DEFAULT_LEECH);
         this.pegMultiplier = 1;
         this.funnelBonus = 0;
         this.lavaAreaSplashEnabled = false;
@@ -215,6 +229,9 @@ export class OrbBalance {
         }
         if (type === OrbType.Magma) {
             return this.magma;
+        }
+        if (type === OrbType.Leech) {
+            return this.leech;
         }
         return this.normal;
     }

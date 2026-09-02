@@ -13,7 +13,7 @@
 
 | 维度 | 已有 | 缺口 |
 |---|---|---|
-| 玩法 | 6 球种、3 漏斗、4 钉种、5 敌种、16 卡（含 3 机制应答卡）+ 4 跨局解锁卡、5 遗物、Boss 行为+精英词缀、5 钉板版型（2 解锁）、50 章×10 关、Meta 解锁树（12 轨三条根深度链）死亡补偿 | 动态难度、每日任务、长线目标 |
+| 玩法 | 7 球种、3 漏斗、4 钉种、5 敌种、16 卡（含 3 机制应答卡）+ 5 跨局解锁卡、5 遗物、Boss 行为+精英词缀、5 钉板版型（2 解锁）、50 章×10 关、Meta 解锁树（12 轨三条根深度链）死亡补偿 | 动态难度、每日任务、长线目标 |
 | 视觉 | CameraShake / FloatingText / Punch 动画 | 全部 emoji+色块占位；无特效、无场景美术 |
 | 音频 | 撞钉直播池 + Web Audio 合成特效 | 音效 2 个文件；无 BGM |
 | 运营 | localStorage 进度+Meta 存档 | 零埋点、无变现点位、无留存钩子 |
@@ -37,7 +37,7 @@
 | 节点 | 现状 | 动作 | 原理 |
 |---|---|---|---|
 | D0 首 10 分钟 | TutorialManager 已有 | 前 3 关手工编排：1-1 纯普通怪教学、1-2 必掉雷球卡（首个爽点）、1-3 必出金币槽（经济教学） | 锚定效应：首印象锚定后续判断 |
-| D1 次留 | Meta 12 条×5 级三条根深度链（castle→{orbCap→boardLab, startShield, siege} / gold→{bargain, shard} / damage→{orbLab, insight→forbiddenPack}），已含版型 D/E + 禁忌卡 + 第 5/6 球种（等离子/熔核）跨局解锁 | 真机校准平衡（护盾分布 / 等离子·熔核手感 / 商道·炮台收益） | 随机+固定奖励混合建立信任 |
+| D1 次留 | Meta 12 条×5 级三条根深度链（castle→{orbCap→boardLab, startShield, siege} / gold→{bargain, shard} / damage→{orbLab, insight→forbiddenPack}），已含版型 D/E + 禁忌卡 + 第 5/6/7 球种（等离子/熔核/吸血）跨局解锁；锻造区 📖 解锁总览预览切换 | 真机校准平衡（护盾分布 / 三球种手感 / 商道·炮台·吸血收益） | 随机+固定奖励混合建立信任 |
 | D3-D7 | 无 | 每日任务 3 条/天（击杀 N 只、使用 X 球、观看 1 次广告）；每日挑战关（固定 seed + 好友排行）；7 日签到 | 节奏控制：可预期固定奖励打底 |
 | D30 长线 | 50 章线性公式 | 每 5 章一个视觉主题 + 1 种新机制敌人；50 章后无尽模式 | 每约 7 分钟一个新元素 |
 
@@ -185,4 +185,5 @@
 | 2026-09-02 | Meta 树扩至 8 轨（方向 3 续） | 三条深度链：castle→**弹珠槽扩容**（牌库有效容量 8→最多 13，`DeckManager.maxDeckSize` 吃 `getOrbCapBonus`）→**钉板实验台**（Lv1/Lv3 解锁版型 D/E 入随机池，`activePegLayouts`；新版型经"无相邻等长行 + 复用既有相邻行对"构造保证无直落不变量，`selfcheck-peg-layouts` worstGap 校验通过）；gold→碎片收藏；damage→战术洞察→**禁忌卡包**（Lv1/Lv3 解锁 聚能奇点/猎神契约 两张 `FORBIDDEN_CARDS` 跨局专属卡并入抽卡池）。锻造区改双列 4×4（单列 8 行放不下 180px 带）。新球种跨局解锁因需新物理行为、风险高，明确留后续。全套 23/23 绿 |
 | 2026-09-02 | 第 5 球种 + 10 轨（方向 2/3 终） | **新球种「等离子球」**（`OrbType.Plasma=4`）：签名机制**无视铁甲格挡与 Boss 坚盾**（`takeDamage` 两处 `orbType !== Plasma` 放行），代价是伤害吞吐更低（起始 30<40、每钉 +12<15，防"无视护盾"变严格占优）；经新 meta 轨**球种工坊**（damage←Lv2）解锁其 `AddOrb` 卡入池。**战备护盾**（castle←Lv2）开局要塞护盾 +15/级（`CastleController.onLoad`）。跨局卡泛化 `FORBIDDEN_CARDS`→`META_UNLOCKED_CARDS`（禁忌×2 + 等离子球）。第 5 球种全反馈通道接线（配色/拖尾/瞄准/辉光/受击紫光/炮塔色/音效/卡组图例）+ 延迟密度重建泛化 `applyHeavyDensity`。锻造区改自适应双列 `ceil(n/2)` 容 10 行。`selfcheck-meta-cards` 新增 ⑦ 段锁死"新球种不漏挂任一分支"+ 权衡不变量；deck-view 4→5 球种。全套 23/23 绿 |
 | 2026-09-02 | 第 6 球种 + 12 轨（球种工坊多解锁扩展） | **熔核球**（`OrbType.Magma=5`）：走**通用累积路径**（不碰熔岩溅射分支，零回归），身份=超重重压 + 每钉 +75（>熔岩 60）+ 剥坚盾 3 层（`bulwarkPeelMagma`），经**球种工坊 Lv3** 解锁——验证 orbLab 从单解锁（Lv1 等离子）扩到多档位（Lv1+Lv3）。全反馈通道接线同 Plasma。**两数值轨**：商道 bargain（gold←Lv2，商店价 -8%/级封顶 -40%，`ShopDialog.finalPrice` 统一扣费+显示+可付）、攻城炮台 siege（castle←Lv4，炮塔子弹 +20%/级，`TurretController` 命中乘 `(1+getSiegeBonus)`）。锻造区改 **1/2/3 列自适应**（≤4/≤10/>10），三列窄行走紧凑模式（省效果文案）。`selfcheck-meta-cards` ⑦ 段扩至双球种全分支 + bargain/siege 行为真跑；boss-behaviors/funnel-orb 透传断言放宽首参。全套 23/23 绿 |
+| 2026-09-02 | 第 7 球种 + 解锁总览预览（方向 2/3 续） | **吸血球**（`OrbType.Leech=6`）：走**普通物理**（非重球，不碰延迟密度分支），身份=**命中后治疗城堡**（伤害 25% 转要塞生命，`TurretController` 单一投递点命中后 `CastleController.heal`，不改伤害分配→零回归），经**球种工坊 Lv5** 封顶解锁——orbLab 成三档功能互补（Lv1 等离子反盾 / Lv3 熔核反 Boss / Lv5 吸血续航）。回血倍率 `OrbBalance.leechHealRatio` 单一来源。**收尾③**：锻造区加 **📖 解锁总览切换**——复用现有行节点，预览模式行显「名称·效果/describe」（含 🔒 前置），购买模式显 Lv+价格，预览态点击不扣费（`_forgePreview` 守卫 `onForgeRowClick`）；解决三列紧凑模式看不到效果文案的问题，零布局改动。`selfcheck-meta-cards` ⑦ 段扩至三球种全分支 + Leech 回血钩子 + 非重球不变量 + orbLab Lv5 describe；meta-reward 补预览切换断言 + applyMetaBonus 七球种全覆盖；deck-view 6→7。全套 23/23 绿 |
 

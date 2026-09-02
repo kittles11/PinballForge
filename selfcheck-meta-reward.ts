@@ -113,6 +113,12 @@ check('锻造区列数自适应：≤4 单列 / ≤10 双列 / >10 三列（cols
     && /const perCol = Math\.ceil\(n \/ cols\)/.test(result));
 check('可买金色 / 不可买灰 / 满级暗灰（颜色反馈三态）',
     /FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED/.test(result) && /FORGE_COLOR_MAXED/.test(result));
+check('解锁总览预览切换：📖/💰 按钮 toggleForgePreview 翻 _forgePreview，预览模式行显效果且点击不购买',
+    /private _forgePreview = false/.test(result)
+    && /private toggleForgePreview\(\): void/.test(result)
+    && /this\._forgePreview = !this\._forgePreview/.test(result)
+    && /if \(this\._forgePreview\) \{\s*return;/.test(result)
+    && /u\.describe\(lv\)/.test(result));
 
 // ── ⑥ 加成挂点：城堡血量 / 弹珠伤害 / 开局金币 ──
 const castle = strip(read('Battle', 'CastleController.ts'));
@@ -124,13 +130,15 @@ const goldLabel = strip(read('Game', 'GoldLabelController.ts'));
 const maxHpIdx = castle.indexOf('this.maxHp += MetaManager.getCastleBonus();');
 const hpInitIdx = castle.indexOf('this.currentHp = this.maxHp;');
 check('CastleController.onLoad：maxHp 先套 meta 加成再初始化 currentHp', maxHpIdx >= 0 && hpInitIdx > maxHpIdx);
-check('OrbBalance.applyMetaBonus 赋值式幂等（默认值 + bonus，五球种全覆盖）',
+check('OrbBalance.applyMetaBonus 赋值式幂等（默认值 + bonus，七球种全覆盖）',
     /static applyMetaBonus\(\): void/.test(orbBalance)
     && /this\.normal\.baseDamage = DEFAULT_NORMAL\.baseDamage \+ bonus;/.test(orbBalance)
     && /this\.lightning\.baseDamage = DEFAULT_LIGHTNING\.baseDamage \+ bonus;/.test(orbBalance)
     && /this\.lava\.baseDamage = DEFAULT_LAVA\.baseDamage \+ bonus;/.test(orbBalance)
     && /this\.frost\.baseDamage = DEFAULT_FROST\.baseDamage \+ bonus;/.test(orbBalance)
-    && /this\.plasma\.baseDamage = DEFAULT_PLASMA\.baseDamage \+ bonus;/.test(orbBalance));
+    && /this\.plasma\.baseDamage = DEFAULT_PLASMA\.baseDamage \+ bonus;/.test(orbBalance)
+    && /this\.magma\.baseDamage = DEFAULT_MAGMA\.baseDamage \+ bonus;/.test(orbBalance)
+    && /this\.leech\.baseDamage = DEFAULT_LEECH\.baseDamage \+ bonus;/.test(orbBalance));
 const resetBody = (orbBalance.match(/static reset\(\): void \{[\s\S]*?\n    \}/) || [''])[0];
 check('OrbBalance.reset() 末尾套用 meta 加成（重开一局也生效）', resetBody.includes('this.applyMetaBonus();'));
 const deckOnLoad = (deck.match(/protected onLoad\(\): void \{[\s\S]*?\n    \}/) || [''])[0];

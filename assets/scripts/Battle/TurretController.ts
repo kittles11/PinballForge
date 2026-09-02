@@ -8,6 +8,8 @@ import { EnemyController } from './EnemyController';
 import { OrbType, FunnelType } from '../Core/DataModels';
 import { orbTrailColor, Theme } from '../Core/ArtTheme';
 import { MetaManager } from '../Core/MetaManager';
+import { OrbBalance } from '../Core/OrbBalance';
+import { CastleController } from './CastleController';
 import { RuntimeTex } from '../Core/RuntimeTex';
 import { FxManager } from '../Core/FxManager';
 
@@ -146,6 +148,13 @@ export class TurretController extends Component {
                     // ⚒ meta「攻城炮台」：炮塔子弹伤害按等级加成（siegeBonus = Lv × 20%）
                     const dmg = Math.round(data.damage * (1 + MetaManager.getSiegeBonus()));
                     target.takeDamage(dmg, data.orbType, false, data.funnelType ?? null);
+                    // 🌳 吸血球：命中后按倍率治疗城堡（续航，不改伤害分配；命中才回血，语义正确）
+                    if (data.orbType === OrbType.Leech) {
+                        const heal = Math.round(dmg * OrbBalance.leechHealRatio);
+                        if (heal > 0) {
+                            CastleController.instance?.heal(heal);
+                        }
+                    }
                     // ★ 命中火花：跟随珠子类型色
                     FxManager.spark(target.node.worldPosition, orbTrailColor(data.orbType), 3);
                 }
@@ -181,6 +190,9 @@ export class TurretController extends Component {
         } else if (orbType === OrbType.Magma) {
             color = Theme.orb.magma; // 熔核洋红大弹
             radius = 17;
+        } else if (orbType === OrbType.Leech) {
+            color = Theme.orb.leech; // 吸血翠绿弹
+            radius = 12;
         } else {
             color = Theme.orb.normal; // #FFFFFF 普通银白
             radius = 10;

@@ -371,6 +371,10 @@ export class AudioManager {
             // 熔核：比熔岩更沉的超重轰鸣（更低频三角波 + 次声打底）
             AudioManager.playTone('triangle', 95, 0.6, 0.5, { endFreq: 32 });
             AudioManager.playTone('sine', 48, 0.65, 0.42, { endFreq: 22 });
+        } else if (type === OrbType.Leech) {
+            // 吸血：下探后回勾的"汲取"音（sine 先降后升）
+            AudioManager.playTone('sine', 520, 0.28, 0.18, { endFreq: 220 });
+            AudioManager.playTone('sine', 300, 0.34, 0.16, { endFreq: 660, delay: 0.1 });
         } else {
             // 普通：轻量弹射叮声（复用直播池降级合成音，音色与撞钉一致）
             AudioManager.playSynthDing(1);

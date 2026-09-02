@@ -242,6 +242,12 @@ export class OrbController extends Component {
                 collider.density = OrbBalance.magma.density;
             }
             this.node.name = 'MagmaOrb';
+        } else if (type === OrbType.Leech) {
+            // 🌳 吸血球：翠绿 + 普通物理（回血机制在 TurretController 命中后兑现，不改伤害分配）
+            if (sp) {
+                sp.color = Theme.orb.leech;
+            }
+            this.node.name = 'LeechOrb';
         } else if (type === OrbType.Normal) {
             if (sp) {
                 // ★ 美术修复：普通球本体此前沿用 Prefab 烘焙的 #2DACE7 蓝，

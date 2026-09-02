@@ -43,6 +43,7 @@ const C_FROST = 0xE0F7FA;        // 霜冻淡冰蓝
 const C_LAVA = 0xFF4400;         // 熔岩火红
 const C_PLASMA = 0xC040FF;       // 等离紫（第 5 球种：Meta 球种工坊解锁）
 const C_MAGMA = 0xFF2079;        // 熔核洋红（第 6 球种：Meta 球种工坊 Lv3 高阶解锁）
+const C_LEECH = 0x36E77A;        // 吸血翠绿（第 7 球种：Meta 球种工坊 Lv5 封顶解锁）
 const C_CANNON = 0xFF3333;       // 聚能（重炮）红
 const C_PANEL = 0x1E2438;        // UI 面板靛蓝
 
@@ -89,7 +90,7 @@ export const Theme = {
         redDot: hex(0xFF5252),
     },
 
-    /** 弹珠：6 球种核心色 + 受击反馈 */
+    /** 弹珠：7 球种核心色 + 受击反馈 */
     orb: {
         normal: hex(C_WHITE),
         lightning: hex(C_ICE),
@@ -97,6 +98,7 @@ export const Theme = {
         frost: hex(C_FROST),
         plasma: hex(C_PLASMA),
         magma: hex(C_MAGMA),
+        leech: hex(C_LEECH),
         textOk: hex(C_HIT_GREEN),
         lavaText: hex(0xFF6628),
         lightningFlash: hex(0xDCFFFF),
@@ -169,6 +171,7 @@ const ORB_TRAIL_COLORS: Record<number, Color> = {
     3: hex(C_FROST),       // 霜冻：雪白微蓝
     4: hex(C_PLASMA),      // 等离子：等离紫
     5: hex(C_MAGMA),       // 熔核：洋红
+    6: hex(C_LEECH),       // 吸血：翠绿
 };
 
 const ORB_AIM_COLORS: Record<number, Color> = {
@@ -178,6 +181,7 @@ const ORB_AIM_COLORS: Record<number, Color> = {
     3: hex(C_FROST, 240),
     4: hex(C_PLASMA, 240),
     5: hex(C_MAGMA, 240),
+    6: hex(C_LEECH, 240),
 };
 
 const FUNNEL_COLORS: Record<number, Color> = {

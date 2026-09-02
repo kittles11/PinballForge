@@ -146,7 +146,7 @@ check('describe 档位文案：boardLab Lv1→版型D / Lv3→版型D+E；orbLab
         const bg = list.find((u: any) => u.id === 'bargain').describe;
         const sg = list.find((u: any) => u.id === 'siege').describe;
         return bl(1).includes('版型D') && !bl(1).includes('E') && bl(3).includes('D+E')
-            && ol(0).includes('未解锁') && ol(1).includes('等离子球') && ol(3).includes('熔核')
+            && ol(0).includes('未解锁') && ol(1).includes('等离子球') && ol(3).includes('熔核') && !ol(3).includes('吸血') && ol(5).includes('吸血')
             && fp(1).includes('奇点') && !fp(1).includes('猎神') && fp(3).includes('猎神')
             && bg(2).includes('16') && sg(1).includes('20');
     })());
@@ -208,8 +208,8 @@ check('战备护盾接线：CastleController.onLoad 套 getStartShieldBonus 到 
     /this\.shield \+= MetaManager\.getStartShieldBonus\(\)/.test(read('Battle', 'CastleController.ts')));
 check('getStartShieldBonus 行为：startShield Lv3 → +45',
     (() => { MetaManager.levels = LV({ startShield: 3 }); return MetaManager.getStartShieldBonus() === 45; })());
-check('跨局解锁卡数据：4 张专属卡（禁忌×2 + 等离子球 + 熔核球），metaLock 各指自己子轨，复用既有 actionType',
-    META_UNLOCKED_CARDS.length === 4
+check('跨局解锁卡数据：5 张专属卡（禁忌×2 + 等离子/熔核/吸血球），metaLock 各指自己子轨，复用既有 actionType',
+    META_UNLOCKED_CARDS.length === 5
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.track === 'forbiddenPack'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').metaLock.lv === 1
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'forb_singularity').actionType === 'BuffHeavy'
@@ -222,15 +222,19 @@ check('跨局解锁卡数据：4 张专属卡（禁忌×2 + 等离子球 + 熔�
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').metaLock.track === 'orbLab'
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').metaLock.lv === 3
     && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').actionType === 'AddOrb'
-    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').orbType === 5);
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_magma').orbType === 5
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_leech').metaLock.track === 'orbLab'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_leech').metaLock.lv === 5
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_leech').actionType === 'AddOrb'
+    && META_UNLOCKED_CARDS.find((c: any) => c.id === 'orb_leech').orbType === 6);
 check('跨局卡默认不在 CARD_DATABASE（常规局抽不到，仅经对应子轨解锁并入池）',
-    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'orb_plasma', 'orb_magma'].includes(c.id)));
+    !CARD_DATABASE.some((c: any) => ['forb_singularity', 'forb_godslayer', 'orb_plasma', 'orb_magma', 'orb_leech'].includes(c.id)));
 check('RewardDialog 按 metaLock 档位过滤并入跨局卡（getLv(track) >= lv）',
     /META_UNLOCKED_CARDS/.test(reward)
     && /!c\.metaLock \|\| MetaManager\.getLv\(c\.metaLock\.track as MetaUpgradeId\) >= c\.metaLock\.lv/.test(reward)
     && /\[\.\.\.REWARD_CARD_POOL, \.\.\.unlockedSpecials\]/.test(reward));
 
-// ── ⑦ 第 5/6 球种「等离子球 / 熔核球」全分支接线安全网（新球种最易漏挂分支 → 逐项锁死） ──
+// ── ⑦ 第 5/6/7 球种「等离子 / 熔核 / 吸血」全分支接线安全网（新球种最易漏挂分支 → 逐项锁死） ──
 const { OrbType, OrbBalance: OB } = await import('./assets/scripts/Core/OrbBalance.ts');
 const { OrbType: OT } = await import('./assets/scripts/Core/DataModels.ts');
 const artTheme = strip(read('Core', 'ArtTheme.ts'));
@@ -284,6 +288,35 @@ check('EnemyController：熔核球剥坚盾 bulwarkPeelMagma=3 + 受击闪光 Ma
 check('DataModels：bulwarkPeelMagma=3', /bulwarkPeelMagma: 3/.test(strip(read('Core', 'DataModels.ts'))));
 check('DeckManager.ORB_TYPE_NAMES 补第 6 名 + DeckViewDialog 图例含熔核球',
     /'熔核球'/.test(deckMgr) && /OrbType\.Magma/.test(strip(read('UI', 'DeckViewDialog.ts'))));
+// —— 第 7 球种「吸血球」：普通物理（非重球），身份=命中后治疗城堡（不改伤害分配） ——
+check('OrbType.Leech = 6（枚举新增值，不与既有 0-5 冲突）', OT.Leech === 6);
+check('OrbBalance.configFor(Leech) 行为真跑：返回 leech 配置 baseDamage=40 pegEnergyGain=18',
+    (() => {
+        const cfg = OB.configFor(OT.Leech);
+        return cfg === OB.leech && cfg.baseDamage === 40 && cfg.pegEnergyGain === 18;
+    })());
+check('吸血球为普通物理球（非重球）：leech 配置无 scale/density（不碰延迟密度重建分支）',
+    (OB.leech as any).scale === undefined && (OB.leech as any).density === undefined);
+check('leechHealRatio = 0.25（回血倍率单一来源，OrbBalance 定义）',
+    OB.leechHealRatio === 0.25);
+check('OrbBalance 全覆盖：applyMetaBonus 与 reset 均含 leech',
+    /this\.leech\.baseDamage = DEFAULT_LEECH\.baseDamage \+ bonus/.test(OB_src())
+    && /Object\.assign\(this\.leech, DEFAULT_LEECH\)/.test(OB_src()));
+check('ArtTheme 配色全覆盖：Theme.orb.leech + 拖尾[6] + 瞄准[6]',
+    /leech: hex\(C_LEECH\)/.test(artTheme)
+    && /6: hex\(C_LEECH\)/.test(artTheme)
+    && /6: hex\(C_LEECH, 240\)/.test(artTheme));
+check('OrbController.initOrbType 有 Leech 分支（仅配色+命名，不进延迟密度重建）',
+    /type === OrbType\.Leech/.test(orbCtrl) && /Theme\.orb\.leech/.test(orbCtrl)
+    && !/this\.orbType === OrbType\.Leech/.test(orbCtrl));
+check('TurretController：Leech 命中后按 leechHealRatio 治疗城堡（单一投递点，命中才回血）',
+    /data\.orbType === OrbType\.Leech/.test(strip(read('Battle', 'TurretController.ts')))
+    && /CastleController\.instance\?\.heal\(heal\)/.test(strip(read('Battle', 'TurretController.ts')))
+    && /dmg \* OrbBalance\.leechHealRatio/.test(strip(read('Battle', 'TurretController.ts'))));
+check('EnemyController：吸血球受击闪光 case OrbType.Leech',
+    /case OrbType\.Leech/.test(enemy));
+check('DeckManager.ORB_TYPE_NAMES 补第 7 名 + DeckViewDialog 图例含吸血球',
+    /'吸血球'/.test(deckMgr) && /OrbType\.Leech/.test(strip(read('UI', 'DeckViewDialog.ts'))));
 // —— ③ 新数值轨接线：商道（ShopDialog）+ 攻城炮台（TurretController） ——
 check('商道接线：ShopDialog 经 finalPrice 统一扣费与显示（乘 1 - getBargainDiscount）',
     /MetaManager\.getBargainDiscount\(\)/.test(strip(read('UI', 'ShopDialog.ts')))
