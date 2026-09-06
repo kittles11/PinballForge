@@ -32,8 +32,9 @@ const deck = strip(read('Core', 'DeckManager.ts'));
 const tutorial = strip(read('Core', 'TutorialManager.ts'));
 
 // ── ① 开火演出 + 结算大字 ──
-check('入槽结算弹出「⚡基础 ×倍率」第一段跳字',
-    /⚡\$\{Math\.round\(base\)\} ×\$\{multStr\}/.test(orb));
+check('入槽结算弹出「基础 ×倍率」第一段跳字',
+    /\$\{Math\.round\(base\)\} ×\$\{multStr\}/.test(orb)
+    && /Theme\.white/.test(orb));
 check('入槽结算弹出「总伤 💥」暴击大字（颜色跟随球种拖尾色）',
     /\$\{Math\.round\(damage\)\} 💥/.test(orb) && /orbTrailColor\(this\.orbType\)/.test(orb));
 check('金币槽不重复弹伤害大字（type !== FunnelType.GoldCoin 分支）',
@@ -84,20 +85,21 @@ check('resources 目录已有 ding.mp3 且原始 assets/ding.mp3 保留',
     existsSync(join(ROOT, 'assets', 'resources', 'audio', 'ding.mp3'))
     && existsSync(join(ROOT, 'assets', 'ding.mp3')));
 
-// ── ⑥ 数值曲线线性重标定 ──
-check('baseHp 改为线性：140 + 90×(章-1) + 12×(关-1)',
-    /const baseHp = BASE_HP \+ \(this\.currentChapter - 1\) \* 90 \+ \(this\.currentLevel - 1\) \* 12;/.test(level));
-check('指数爆炸公式已移除（Math.pow 不再出现）',
-    !/Math\.pow/.test(level));
+// ── ⑥ 数值曲线：线性基线 × 章节复合成长（难度方案A 曲线校准） ──
+check('linearHp 线性基线：140 + 90×(章-1) + 12×(关-1)',
+    /const linearHp = BASE_HP \+ \(this\.currentChapter - 1\) \* 90 \+ \(this\.currentLevel - 1\) \* 12;/.test(level));
+check('baseHp 复合成长：线性基线 × HP_CHAPTER_GROWTH^(章-1)，系数锁定 1.045（防 1.15 指数爆炸回归）',
+    /const baseHp = Math\.round\(linearHp \* Math\.pow\(HP_CHAPTER_GROWTH, this\.currentChapter - 1\)\);/.test(level)
+    && /const HP_CHAPTER_GROWTH = 1\.045;/.test(level));
 check('Boss×4.5 / 精英×2.5 倍率保持不变',
     /const BOSS_HP_MULT = 4\.5;/.test(level) && /const ELITE_HP_MULT = 2\.5;/.test(level));
 
-// 锚点数值复核（纯算术，防公式被手滑改坏）
-const hp = (ch: number, lv: number) => 140 + (ch - 1) * 90 + (lv - 1) * 12;
+// 锚点数值复核（纯算术，防公式被手滑改坏；与实现同序：先四舍五入复合基线，再乘精英/Boss 倍率）
+const hp = (ch: number, lv: number) => Math.round((140 + (ch - 1) * 90 + (lv - 1) * 12) * Math.pow(1.045, ch - 1));
 check('锚点：1-1 普通怪 = 140', hp(1, 1) === 140);
-check('锚点：5-10 精英 = 1520', hp(5, 10) * 2.5 === 1520);
-check('锚点：10-10 Boss = 4761', hp(10, 10) * 4.5 === 4761);
-check('锚点：50-10 Boss = 20961', hp(50, 10) * 4.5 === 20961);
+check('锚点：5-10 精英 = 1813', Math.round(hp(5, 10) * 2.5) === 1813);
+check('锚点：10-10 Boss = 7074', Math.round(hp(10, 10) * 4.5) === 7074);
+check('锚点：50-10 Boss = 181179', Math.round(hp(50, 10) * 4.5) === 181179);
 
 console.log(failed === 0 ? '\n✅ P0 自检全部通过' : `\n❌ ${failed} 项未通过`);
 // 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）

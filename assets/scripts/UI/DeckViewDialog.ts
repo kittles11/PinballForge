@@ -6,9 +6,13 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { DeckManager } from '../Core/DeckManager';
 import { RelicManager } from '../Core/RelicManager';
 import { OrbType, RelicType, RELIC_DATABASE, ALL_RELIC_TYPES } from '../Core/DataModels';
-import { Theme } from '../Core/ArtTheme';
+import { orbTrailColor, Theme } from '../Core/ArtTheme';
+import { mountIcon } from '../Core/IconLib';
+import { raisedButton } from '../Core/UiKit';
+import { SignInDialog } from './SignInDialog'; // 模块导入即完成 SHOW_SIGNIN 接线（含 AFTER_SCENE_LAUNCH 自举）
+import { SettingsDialog } from './SettingsDialog'; // 模块导入即完成 SHOW_SETTINGS 接线
 
-const { ccclass, property } = _decorator;
+const { ccclass } = _decorator;
 
 // ---------- 纯代码 UI 样式（无 Inspector 布置时自动构建整套背包界面，与 ShopDialog 同款风格） ----------
 const PANEL_WIDTH = 660;
@@ -27,15 +31,15 @@ const CLOSE_BTN_BORDER = Theme.ui.gold;
 /** 内容区统一宽度 */
 const CONTENT_WIDTH = 600;
 
-/** 球种 → 图标 / 显示名（命名与战后卡牌奖励对齐：裂变雷球 / 重力熔岩球 / 霜冻冰球） */
+/** 球种 → 图标（IconLib 图标名）/ 显示名（命名与战后卡牌奖励对齐：裂变雷球 / 重力熔岩球 / 霜冻冰球） */
 const ORB_DISPLAY: { type: OrbType; icon: string; name: string }[] = [
-    { type: OrbType.Normal, icon: '⚪', name: '普通弹珠' },
-    { type: OrbType.Lightning, icon: '⚡', name: '裂变雷球' },
-    { type: OrbType.Lava, icon: '🌋', name: '重力熔岩球' },
-    { type: OrbType.Frost, icon: '❄️', name: '霜冻冰球' },
-    { type: OrbType.Plasma, icon: '🟣', name: '等离子球' },
-    { type: OrbType.Magma, icon: '🔴', name: '熔核球' },
-    { type: OrbType.Leech, icon: '🟢', name: '吸血球' },
+    { type: OrbType.Normal, icon: 'orbPlain', name: '普通弹珠' },
+    { type: OrbType.Lightning, icon: 'bolt', name: '裂变雷球' },
+    { type: OrbType.Lava, icon: 'flame', name: '重力熔岩球' },
+    { type: OrbType.Frost, icon: 'snow', name: '霜冻冰球' },
+    { type: OrbType.Plasma, icon: 'plasma', name: '等离子球' },
+    { type: OrbType.Magma, icon: 'magma', name: '熔核球' },
+    { type: OrbType.Leech, icon: 'drop', name: '吸血球' },
 ];
 
 /**
@@ -50,14 +54,6 @@ const ORB_DISPLAY: { type: OrbType; icon: string; name: string }[] = [
  */
 @ccclass('DeckViewDialog')
 export class DeckViewDialog extends Component {
-    /** 牌库统计文本（多行）：「⚪ 普通弹珠 × 2\n⚡ 裂变雷球 × 2…」 */
-    @property(Label)
-    deckContentLabel: Label | null = null;
-
-    /** 遗物详情文本（多行）：「⛏️ 黄金矿工：全场每次撞钉额外 +1 金币…」 */
-    @property(Label)
-    relicContentLabel: Label | null = null;
-
     /** 场景启动自举是否已注册（幂等，防重复监听） */
     private static _bootstrapped = false;
 
@@ -79,9 +75,15 @@ export class DeckViewDialog extends Component {
         if (!node?.isValid) {
             node = new Node('DeckViewDialog');
             node.layer = uiLayer.layer;
+            node.active = false; // 创建即隐藏：避免 start() 竞态（热重载时误关打开中的弹窗）
             uiLayer.addChild(node);
         }
-        if (!node.getComponent(DeckViewDialog)) {
+        // 热重载防御：只保留首个组件实例，多余销毁（与 DailyTaskBadge 同款）
+        const comps = node.getComponents(DeckViewDialog);
+        for (let i = 1; i < comps.length; i++) {
+            comps[i].destroy();
+        }
+        if (comps.length === 0) {
             node.addComponent(DeckViewDialog);
         }
     }
@@ -133,6 +135,12 @@ export class DeckViewDialog extends Component {
             return;
         }
         this.ensureReady();
+        // 防御性重建：构建好的 UI 若被热重载/清理清掉子节点，_ready 仍为 true 会激活空节点
+        if (this.node.children.length === 0) {
+            console.warn('[诊断] DeckViewDialog 子节点丢失，重建 UI');
+            this._ready = false;
+            this.ensureReady();
+        }
         this.refreshContent();
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, true); // 弹窗打开：冻结发射
         this.node.active = true;
@@ -160,55 +168,93 @@ export class DeckViewDialog extends Component {
 
     // ---------- 数据格式化 ----------
 
-    /** 打开时刷新全部文本：牌库统计 / 遗物详情 / 分区计数（保证每次看到的是当前最新状态） */
+    /** 打开时刷新全部内容：牌库行 / 遗物行 / 分区计数（保证每次看到的是当前最新状态） */
     private refreshContent(): void {
         const deck = DeckManager.instance;
         if (this._deckHeader?.isValid) {
-            this._deckHeader.string = `🎴 牌库（${deck?.getDeckSize() ?? 0}/${deck?.maxDeckSize ?? 8} 颗）`;
+            this._deckHeader.string = `牌库（${deck?.getDeckSize() ?? 0}/${deck?.maxDeckSize ?? 8} 颗）`;
         }
-        if (this.deckContentLabel?.isValid) {
-            this.deckContentLabel.string = this.buildDeckText(deck);
-        }
+        this.rebuildRows('DeckRows', 0, 200, 140, this.collectDeckRows(deck));
         if (this._relicHeader?.isValid) {
-            this._relicHeader.string = `🧿 遗物（${RelicManager.getRelics().length}/${ALL_RELIC_TYPES.length}）`;
+            this._relicHeader.string = `遗物（${RelicManager.getRelics().length}/${ALL_RELIC_TYPES.length}）`;
         }
-        if (this.relicContentLabel?.isValid) {
-            this.relicContentLabel.string = this.buildRelicText();
-        }
+        this.rebuildRows('RelicRows', 0, -42, 224, this.collectRelicRows());
     }
 
-    /** 牌库统计：单遍统计 masterDeck 各球种数量，按固定球种顺序输出（数量为 0 的不显示） */
-    private buildDeckText(deck: DeckManager | null): string {
+    // ---------- 逐行「矢量图标 + 文字」内容渲染（替代原 emoji 多行 Label：字形跨平台一致 + 可染色） ----------
+
+    /** 牌库行：单遍统计 masterDeck 各球种数量，按固定球种顺序输出（数量为 0 的不显示；图标染球种主题色） */
+    private collectDeckRows(deck: DeckManager | null): { icon: string; tint: Color | null; text: string }[] {
         const masterDeck = deck?.masterDeck;
         if (!masterDeck || masterDeck.length === 0) {
-            return '（牌库为空）';
+            return [{ icon: 'orbPlain', tint: Theme.ui.gray, text: '牌库为空' }];
         }
         const counts = new Map<number, number>();
         for (const type of masterDeck) {
             counts.set(type, (counts.get(type) ?? 0) + 1);
         }
-        const lines: string[] = [];
+        const rows: { icon: string; tint: Color | null; text: string }[] = [];
         for (const display of ORB_DISPLAY) {
             const count = counts.get(display.type) ?? 0;
             if (count > 0) {
-                lines.push(`${display.icon} ${display.name} × ${count}`);
+                rows.push({ icon: display.icon, tint: orbTrailColor(display.type), text: `${display.name} × ${count}` });
             }
         }
-        return lines.length > 0 ? lines.join('\n') : '（牌库为空）';
+        return rows;
     }
 
-    /** 遗物详情：遍历已拥有遗物，从 RELIC_DATABASE 读取「图标 名称：被动效果描述」 */
-    private buildRelicText(): string {
+    /** 遗物行：遍历已拥有遗物，从 RELIC_DATABASE 读取图标与被动效果描述 */
+    private collectRelicRows(): { icon: string; tint: Color | null; text: string }[] {
         const relics: RelicType[] = RelicManager.getRelics();
         if (relics.length === 0) {
-            return '暂无遗物\n（通关第 5 / 10 关开启传奇藏宝箱获得）';
+            return [{ icon: 'gem', tint: Theme.ui.gray, text: '暂无遗物（通关第 5 / 10 关开启传奇藏宝箱获得）' }];
         }
-        return relics
-            .map((type) => {
-                const info = RELIC_DATABASE[type];
-                return `${info.icon} ${info.name}：${info.desc}`;
-            })
-            .join('\n');
+        return relics.map((type) => {
+            const info = RELIC_DATABASE[type];
+            return { icon: info.icon, tint: Theme.ui.gold, text: `${info.name}：${info.desc}` };
+        });
+    }
+
+    /** 重建一个行容器：n 行在 height 内均分布局，每行 = 左侧矢量图标 + 左对齐文本（幂等重建） */
+    private rebuildRows(
+        containerName: string, x: number, y: number, height: number,
+        rows: { icon: string; tint: Color | null; text: string }[],
+    ): void {
+        let container = this.node.getChildByName(containerName);
+        if (!container?.isValid) {
+            container = new Node(containerName);
+            container.layer = this.node.layer;
+            container.addComponent(UITransform).setContentSize(CONTENT_WIDTH, height);
+            container.setPosition(x, y, 0);
+            this.node.addChild(container);
+        }
+        for (const child of [...container.children]) {
+            child.destroy();
+        }
+        container.removeAllChildren();
+
+        const rowH = Math.min(34, height / Math.max(rows.length, 1));
+        const startY = height / 2 - rowH / 2;
+        rows.forEach((row, i) => {
+            const rowNode = new Node(`Row_${i}`);
+            rowNode.layer = container!.layer;
+            container!.addChild(rowNode);
+            rowNode.setPosition(0, startY - i * rowH, 0);
+
+            mountIcon(rowNode, row.icon, 22, row.tint ?? TEXT_COLOR, -CONTENT_WIDTH / 2 + 16, 0);
+            const labelNode = new Node('Text');
+            labelNode.layer = rowNode.layer;
+            rowNode.addChild(labelNode);
+            labelNode.addComponent(UITransform).setContentSize(CONTENT_WIDTH - 40, rowH - 4);
+            const label = labelNode.addComponent(Label);
+            label.string = row.text;
+            label.fontSize = rowH >= 30 ? 19 : 17;
+            label.lineHeight = rowH - 4;
+            label.color = TEXT_COLOR;
+            label.horizontalAlign = Label.HorizontalAlign.LEFT;
+            label.verticalAlign = Label.VerticalAlign.CENTER;
+            label.overflow = Label.Overflow.SHRINK;
+        });
     }
 
     // ---------- 纯代码 UI 构建（Editor 未布置同名子节点时兜底） ----------
@@ -237,26 +283,61 @@ export class DeckViewDialog extends Component {
         bg.roundRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 18);
         bg.fill();
 
-        // 2) 标题 + 两个分区标题
-        const title = this.ensureLabel('DeckViewTitle', 0, 336, 30, '🎒 牌库与遗物背包', 520, 44);
+        // 2) 标题 + 两个分区标题（纯文本；标题左侧挂矢量背包图标）
+        const title = this.ensureLabel('DeckViewTitle', 0, 336, 30, '牌库与遗物背包', 520, 44);
         if (title?.isValid) {
             title.color = TITLE_COLOR;
+            mountIcon(this.node, 'bag', 26, TITLE_COLOR, -140, 336);
         }
-        this._deckHeader = this.ensureLabel('DeckHeader', 0, 278, 22, '🎴 牌库', 520, 34);
+        this._deckHeader = this.ensureLabel('DeckHeader', 0, 278, 22, '牌库', 520, 34);
         if (this._deckHeader?.isValid) {
             this._deckHeader.color = HEADER_COLOR;
         }
-        this._relicHeader = this.ensureLabel('RelicHeader', 0, 104, 22, '🧿 遗物', 520, 34);
+        this._relicHeader = this.ensureLabel('RelicHeader', 0, 104, 22, '遗物', 520, 34);
         if (this._relicHeader?.isValid) {
             this._relicHeader.color = HEADER_COLOR;
         }
 
-        // 3) 两块多行内容 Label（Inspector 可拖入同名子节点定制，缺省纯代码创建）
-        this.deckContentLabel = this.ensureContentLabel('DeckContentLabel', 0, 200, 140);
-        this.relicContentLabel = this.ensureContentLabel('RelicContentLabel', 0, -42, 224);
-
-        // 4) 关闭按钮
+        // 3) 关闭按钮（凸起浮雕样式）+ 底部工具入口（📅 签到 / ⚙ 设置）
         this.createCloseButton();
+        this.createUtilityButton('SignInEntryBtn', 237, '📅 签到', GameEvents.SHOW_SIGNIN);
+        this.createUtilityButton('SettingsEntryBtn', -237, '⚙ 设置', GameEvents.SHOW_SETTINGS);
+    }
+
+    /**
+     * 底部工具入口按钮（与 CloseBtn 同行两侧，x=±237 不与居中关闭钮重叠）：
+     * 点击先关背包再广播对应 SHOW_* 事件（弹窗本体由各自模块自举挂载到 UILayer）。
+     */
+    private createUtilityButton(name: string, x: number, text: string, evt: GameEvents): void {
+        let node = this.node.getChildByName(name);
+        if (!node?.isValid) {
+            node = new Node(name);
+            node.layer = this.node.layer;
+            this.node.addChild(node);
+            node.addComponent(UITransform).setContentSize(150, 56);
+            const g = node.addComponent(Graphics);
+            raisedButton(g, 150, 56, Theme.ui.blueActive, 12);
+            const labelNode = new Node('Label');
+            labelNode.layer = node.layer;
+            node.addChild(labelNode);
+            labelNode.addComponent(UITransform).setContentSize(150, 56);
+            const label = labelNode.addComponent(Label);
+            label.fontSize = 20;
+            label.lineHeight = 26;
+            label.color = Theme.white.clone();
+            label.horizontalAlign = Label.HorizontalAlign.CENTER;
+            label.verticalAlign = Label.VerticalAlign.CENTER;
+            // 只在创建分支绑定一次（热重载重建子节点后走新建分支重新绑定）
+            node.on(Node.EventType.TOUCH_END, () => {
+                this.closeDialog();
+                EventBus.emit(evt);
+            }, this);
+        }
+        node.setPosition(x, -320, 0);
+        const lbl = node.getChildByName('Label')?.getComponent(Label);
+        if (lbl?.isValid) {
+            lbl.string = text;
+        }
     }
 
     /** 创建/复用分区标题等单行 Label：优先 Editor 已布置的同名子节点，否则纯代码创建 */
@@ -281,29 +362,7 @@ export class DeckViewDialog extends Component {
         return label;
     }
 
-    /** 创建/复用多行内容 Label：固定宽 + SHRINK（行数过多时整体缩字号不溢出面板） */
-    private ensureContentLabel(name: string, x: number, y: number, height: number): Label {
-        let node = this.node.getChildByName(name);
-        if (!node?.isValid) {
-            node = new Node(name);
-            node.layer = this.node.layer;
-            this.node.addChild(node);
-            node.setPosition(x, y, 0);
-        }
-        const ui = node.getComponent(UITransform) ?? node.addComponent(UITransform);
-        ui.setContentSize(CONTENT_WIDTH, height);
-        const label = node.getComponent(Label) ?? node.addComponent(Label);
-        label.string = '';
-        label.fontSize = 20;
-        label.lineHeight = 34;
-        label.color = TEXT_COLOR;
-        label.horizontalAlign = Label.HorizontalAlign.CENTER;
-        label.verticalAlign = Label.VerticalAlign.CENTER;
-        label.overflow = Label.Overflow.SHRINK;
-        return label;
-    }
-
-    /** 底部关闭按钮：绿底金边圆角矩形 + 文字（幂等绑定 TOUCH_END） */
+    /** 底部关闭按钮：凸起浮雕绿底 + 金描边 + 文字（幂等绑定 TOUCH_END） */
     private createCloseButton(): void {
         let node = this.node.getChildByName('CloseBtn');
         if (!node?.isValid) {
@@ -314,9 +373,7 @@ export class DeckViewDialog extends Component {
             const ui = node.addComponent(UITransform);
             ui.setContentSize(260, 56);
             const g = node.addComponent(Graphics);
-            g.fillColor = CLOSE_BTN_COLOR;
-            g.roundRect(-130, -28, 260, 56, 12);
-            g.fill();
+            raisedButton(g, 260, 56, CLOSE_BTN_COLOR, 12);
             g.lineWidth = 2;
             g.strokeColor = CLOSE_BTN_BORDER;
             g.roundRect(-130, -28, 260, 56, 12);
@@ -328,7 +385,7 @@ export class DeckViewDialog extends Component {
             label.string = '✕ 关 闭';
             label.fontSize = 22;
             label.lineHeight = 30;
-            label.color = Color.WHITE;
+            label.color = Theme.white;
             label.horizontalAlign = Label.HorizontalAlign.CENTER;
             label.verticalAlign = Label.VerticalAlign.CENTER;
         }
@@ -358,3 +415,6 @@ export class DeckViewDialog extends Component {
 // 依赖方向恒为 本弹窗 → DeckManager（单向），与 BoardDeflectorManager 的自举模式一致。
 DeckViewDialog.bootstrap();
 DeckViewDialog.ensureMounted();
+// 显式加载两个子面板模块：其模块底部自举完成 SHOW_SIGNIN / SHOW_SETTINGS 接线（幂等）
+SignInDialog.bootstrap();
+SettingsDialog.bootstrap();

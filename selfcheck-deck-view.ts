@@ -19,6 +19,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const read = (...p: string[]): string => readFileSync(join(here, ...p), 'utf8');
 const busSrc = read('assets', 'scripts', 'Core', 'EventBus.ts');
 const deckSrc = read('assets', 'scripts', 'Core', 'DeckManager.ts');
+// IconLib 注册表名提取（IconLib import 'cc' 无法在 Node 下直接 import，正则提取注册表键；
+// 完整数据校验在 selfcheck-icon-ui.ts）
+const iconLibSrc = read('assets', 'scripts', 'Core', 'IconLib.ts');
+const iconSourcesBody = iconLibSrc.match(/const ICON_SOURCES[^=]*= \{([\s\S]*?)\n\};/)?.[1] ?? '';
+const iconNames = [...iconSourcesBody.matchAll(/^    ([a-zA-Z]\w*): /gm)].map((m) => m[1]);
 const dialogSrc = read('assets', 'scripts', 'UI', 'DeckViewDialog.ts');
 const btnSrc = read('assets', 'scripts', 'UI', 'DeckButtonController.ts');
 
@@ -63,11 +68,13 @@ const dialogBoot = dialogSrc.match(/DeckViewDialog\.bootstrap\(\);\s*[\r\n]+\s*D
 check('DeckViewDialog 模块级自举存在（bootstrap + ensureMounted，替代 DeckManager 反向挂载）', !!dialogBoot);
 check('masterDeck 为 public（背包面板统计各球种数量）', /public\s+masterDeck\s*:\s*number\[\]/.test(deckSrc));
 
-// —— 6. 牌库统计聚合公式真值表（与 buildDeckText 行为一致） ——
-// 公式：单遍计数 → 按 ORB_DISPLAY 固定顺序过滤 count>0 → 「icon name × count」以 \n 连接
+// —— 6. 牌库统计聚合公式真值表（与 collectDeckRows 行为一致） ——
+// 公式：单遍计数 → 按 ORB_DISPLAY 固定顺序过滤 count>0 → 行文本「name × count」
+//（图标不再进文本：ORB_DISPLAY.icon 为 IconLib 图标名，逐行 mountIcon 矢量渲染）
 const orbDisplay = [...dialogSrc.matchAll(/\{\s*type:\s*OrbType\.(\w+),\s*icon:\s*'([^']+)',\s*name:\s*'([^']+)'\s*\}/g)]
     .map((m) => ({ key: m[1], icon: m[2], name: m[3] }));
 check('ORB_DISPLAY 覆盖 7 种球种（普通/闪电/熔岩/冰霜/等离子/熔核/吸血）', orbDisplay.length === 7);
+check('ORB_DISPLAY 图标名全部为 IconLib 已注册图标', orbDisplay.every((d) => iconNames.includes(d.icon)));
 const countDeck = (deck: number[]): string => {
     const counts = new Map<number, number>();
     for (const t of deck) {
@@ -76,16 +83,16 @@ const countDeck = (deck: number[]): string => {
     return orbDisplay
         .map((d, i) => ({ ...d, count: counts.get(i) ?? 0 }))
         .filter((d) => d.count > 0)
-        .map((d) => `${d.icon} ${d.name} × ${d.count}`)
+        .map((d) => `${d.name} × ${d.count}`)
         .join('\n');
 };
 check('初始卡组 3普通+1雷+1熔岩+1冰 → 4 行计数', countDeck([0, 0, 0, 1, 2, 3]).split('\n').length === 4);
-check('计数正确聚合（0×3 → ⚪ 普通弹珠 × 3）', countDeck([0, 0, 0, 1, 2, 3]).includes('⚪ 普通弹珠 × 3'));
+check('计数正确聚合（0×3 → 普通弹珠 × 3）', countDeck([0, 0, 0, 1, 2, 3]).includes('普通弹珠 × 3'));
 check('数量为 0 的球种不显示', !countDeck([1, 1]).includes('普通弹珠'));
-check('删卡后数量同步减少（1雷 → ⚡ 裂变雷球 × 1）', countDeck([0, 1, 2, 3]).includes('⚡ 裂变雷球 × 1'));
-check('Meta 解锁的等离子球（type 4）在背包正确计数显示', countDeck([0, 0, 4]).includes('🟣 等离子球 × 1'));
-check('Meta 解锁的熔核球（type 5）在背包正确计数显示', countDeck([0, 0, 5]).includes('🔴 熔核球 × 1'));
-check('Meta 解锁的吸血球（type 6）在背包正确计数显示', countDeck([0, 0, 6]).includes('🟢 吸血球 × 1'));
+check('删卡后数量同步减少（1雷 → 裂变雷球 × 1）', countDeck([0, 1, 2, 3]).includes('裂变雷球 × 1'));
+check('Meta 解锁的等离子球（type 4）在背包正确计数显示', countDeck([0, 0, 4]).includes('等离子球 × 1'));
+check('Meta 解锁的熔核球（type 5）在背包正确计数显示', countDeck([0, 0, 5]).includes('熔核球 × 1'));
+check('Meta 解锁的吸血球（type 6）在背包正确计数显示', countDeck([0, 0, 6]).includes('吸血球 × 1'));
 
 console.log(failed === 0 ? '\n✅ 全部自检通过' : `\n❌ ${failed} 项自检失败`);
 process.exit(failed === 0 ? 0 : 1);

@@ -10,7 +10,7 @@
  * 模型：期望值解析模型（非蒙特卡洛），全部输入取自真实代码常量：
  *   伤害/能量 ← OrbBalance；波次血量/移速 ← LevelManager.getWaveConfig；
  *   推进几何 ← WaveManager(SPAWN_X=320) + EnemyController(defenseLineX=-180)；
- *   漏斗倍率 ← OrbController(FUNNEL_FOCUS/REFINE)；攻城伤害 ← EnemyController(10/秒)。
+ *   漏斗倍率 ← OrbController(FUNNEL_FOCUS/REFINE)；攻城伤害 ← LevelManager.getBaseAttackDamage()（难度方案B：10 + 2.5×(章-1)）。
  * 玩家侧假设（可调，报告中标注）：平均撞钉 8 次/球、出手机隔 2.0s、
  *   漏斗分布 重炮25%/精炼50%/金币25%、雷球 3 连发副球命中 75%。
  *
@@ -44,7 +44,7 @@ const ASSUME = {
     funnelMix: { heavy: 0.25, refine: 0.5, gold: 0.25 }, // 三漏斗落点分布
     lightningSubHitRatio: 0.75, // 雷球副球撞钉效率（散射偏离板心）
     marchDistance: 500,     // SPAWN_X(320) → defenseLineX(-180)
-    siegeDps: 10,           // 单敌到位攻城 DPS（attackInterval 1s × 伤害 10）
+    // 攻城 DPS 不再是常量：随章节成长（难度方案B），逐锚点取 LevelManager.getBaseAttackDamage()
     avgTypeHpMult: 1.15,    // 混合池平均血量修正（Shield1.4/Speed0.7/Slime1.2 加权）
 };
 
@@ -70,7 +70,7 @@ interface AnchorResult {
     clearT: number;     // 全灭本波耗时
     marchT: number;     // 最快敌人撞线耗时
     margin: number;     // marchT - clearT：正=清在撞线前，负=必然漏怪攻城
-    castleLeak: number; // 本波攻城损失 = 敌数 × siegeDps × max(0, -margin)
+    castleLeak: number; // 本波攻城损失 = 敌数 × 当前章攻城伤害(getBaseAttackDamage) × max(0, -margin)
     requiredDps: number; // 撞线前全灭所需 DPS = waveHp / marchT
 }
 
@@ -112,7 +112,7 @@ function simulate(p: Params): Metrics {
         const clearT = waveHp / dps;
         const marchT = p.marchDistance / (def.speed * p.enemySpeedScale);
         const margin = marchT - clearT;
-        const castleLeak = Math.max(0, -margin) * def.count * p.siegeDps;
+        const castleLeak = Math.max(0, -margin) * def.count * LevelManager.getBaseAttackDamage();
         anchors.push({ name, waveHp, clearT, marchT, margin, castleLeak, requiredDps: waveHp / marchT });
     }
     const totalLeak = anchors.reduce((s, a) => s + a.castleLeak, 0);
@@ -230,7 +230,7 @@ function bossFightTable(dpsBase: number): BossFightRow[] {
             ? '基线无解(回复>伤害)'
             : tBase <= marchT
                 ? (tBase >= 30 && tBase <= 90 ? `✅ 时长带内(${tBase.toFixed(0)}s)` : `⏱ ${tBase.toFixed(0)}s 偏离30~90s带`)
-                : `⚠️ 撞线后耗城(城堡仅扛${(BASE.castleHp / (ASSUME.siegeDps * 2)).toFixed(0)}s)`;
+                : `⚠️ 撞线后耗城(城堡仅扛${(BASE.castleHp / (LevelManager.getBaseAttackDamage() * 2)).toFixed(0)}s)`;
         rows.push({ chapter: c, behavior: b, hp, marchT, reqDps, killTBase: tBase, killT3x: tPerfect3x, killT3xIgnore: tIgnore3x, verdict });
     }
     return rows;
@@ -276,6 +276,7 @@ const report = `# 数值敏感性报告（加倍/减半法）
 - 等效 DPS：**${Math.round(base.dps)}**
 - 每关期望金币：**${Math.round(base.goldPerLevel)}**（对照：删卡 80+25 阶梯 / 买球 110 / 遗物 130~220）
 - 基线压力（漏伤/城堡HP）：**${base.pressure.toFixed(1)}**
+- 难度曲线（方案A/B 已接入）：敌人 HP = 线性基线 × 1.045^(章-1)；兵力 3/4/1 → 封顶 6/8/3（每 10/8/12 章 +1，Boss 波恒 1）；攻城伤害 10 + 2.5×(章-1)；移速斜率 1.8/章、封顶 150（50 章内不触顶）。
 
 ## 锚点波次（基线牌库 = 零成长）
 
@@ -298,7 +299,7 @@ ${sensTable}
 3. **暴露的新问题（需要设计，不是调参能救的）**：
    - **成长承重墙**（见锚点表关键发现）：若希望前 4 章是「教学性安全区」，当前曲线成立；若希望零成长玩家也能苟到第 8 章，应压低血量线性项（+90/章）或抬高基线撞钉收益。
    - **金币经济错位**：基线每关 ${Math.round(base.goldPerLevel)} 金币 vs 商店定价 80~220——约 3~4 关才买得起一件遗物，商店在前期接近死系统；要么提金币槽产出，要么降前期定价。
-   - **移速封顶 110**：后期压力全部来自血量线，节奏线（移速）在第 50 章已封顶失效——两条曲线要在版本规划里一起看。
+   - **节奏线已复活（难度方案B）**：移速斜率 1.2→1.8/章、封顶 110→150（50 章内不触顶，50-10 ≈131）；后期压力由血量与节奏双线承担，攻城伤害随章成长后「余量」列负值权重显著上升。
 
 ## Boss 行为等效分析（P2-1，设计目标：Boss 战 30~90s）
 
@@ -311,7 +312,7 @@ ${bossTable}
 **判读**：
 - 基线牌库（零成长）在全部 Boss 章「撞线后耗城」——与锚点表「成长承重墙」结论一致，Boss 行为没有改变这一点，只是改变**需要的构筑方向**（C 考节奏、B 考 AoE、A 考漏斗）。
 - 应对 vs 无视的击杀耗时差 = 机制的真实教学强度：坚盾章 ×3 构筑下 ${bulwarkRows.length ? `${fmtT(bulwarkRows[0].killT3x)} → ${fmtT(bulwarkRows[0].killT3xIgnore)}` : '—'}（约 +${bulwarkRows.length && isFinite(bulwarkRows[0].killT3x) && isFinite(bulwarkRows[0].killT3xIgnore) ? Math.round((bulwarkRows[0].killT3xIgnore / bulwarkRows[0].killT3x - 1) * 100) : 0}%），软惩罚但不可忽略——符合"不做不可赢硬检查"红线。
-- 30~90s 目标带命中 ${bandHits.length}/${bossRows.length} 章（基线口径）；偏离主因是血量线性膨胀（+90/章）而非行为系数——行为等效血量在 ×1.0~×1.5 区间，属可控设计余量。
+- 30~90s 目标带命中 ${bandHits.length}/${bossRows.length} 章（基线口径）；偏离主因是血量复合膨胀（线性基线 × 1.045^(章-1)，难度方案A）而非行为系数——行为等效血量在 ×1.0~×1.5 区间，属可控设计余量。
 
 ## 使用建议
 

@@ -11,7 +11,7 @@
  * 另含手术后的首要不变量：全量扫描 __id__，确保重编号未留下悬空引用。
  */
 import { readFileSync, readdirSync, statSync } from 'fs';
-import { join, resolve } from 'path';
+import { join, relative, resolve } from 'path';
 
 const REPO = resolve(process.cwd());
 const SCENE_PATH = join(REPO, 'assets', 'scenes', 'MainScene.scene');
@@ -206,6 +206,67 @@ const src = (cls: string) => {
     scene.forEach((o: any, i: number) => scan(o, `#${i}`));
     check('引用1 无越界 / 悬空 __id__', dangling.length === 0, dangling.slice(0, 5).join('; '));
 }
+
+// ==================== 8. 资源 uuid 引用完整性（隐形钉故障的静态防线）====================
+// prefab / scene 里的 "__uuid__" 若指向资产库中已不存在的资源，引擎不抛错，只在加载后表现为
+// spriteFrame = null —— 正是「钉子 / 球体隐形」的原始根因（uuid f12a23c4…）。
+// 最阴的地方：library/ 会残留上次导入的 png/json，编辑器里看着「资源还在」，但 asset-db 按
+// .meta 索引解析该 uuid，一旦重建资源库 / 出包就集体消失。故必须在静态层拦住，不留给运行时自愈。
+{
+    const walkAll = (dir: string, out: string[]): void => {
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+            const p = join(dir, ent.name);
+            if (ent.isDirectory()) {
+                walkAll(p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    };
+    const allFiles: string[] = [];
+    walkAll(join(REPO, 'assets'), allFiles);
+
+    /** 资产库合法 uuid：主 uuid + subMetas 子 uuid（形如 `主uuid@f9941`） */
+    const known = new Set<string>();
+    for (const f of allFiles.filter((x) => x.endsWith('.meta'))) {
+        let parsed: any;
+        try {
+            parsed = JSON.parse(readFileSync(f, 'utf8'));
+        } catch {
+            continue;
+        }
+        if (typeof parsed?.uuid === 'string') {
+            known.add(parsed.uuid);
+        }
+        for (const sub of Object.values(parsed?.subMetas ?? {}) as any[]) {
+            if (typeof sub?.uuid === 'string') {
+                known.add(sub.uuid);
+            }
+        }
+    }
+    /** 引擎内置资源（db://internal/ 下，不在 assets 内、无 .meta）：新增内置引用时补进此处 */
+    const BUILTIN = new Set([
+        '20835ba4-6145-4fbc-a58a-051ce700aa3e', // default_btn_normal
+        '544e49d6-3f05-4fa8-9a9e-091f98fc2ce8', // default_btn_pressed
+        '951249e0-9f16-456d-8b85-a6ca954da16b', // default_btn_disabled
+        'b730527c-3233-41c2-aaf7-7cdab58f9749', // default_panel
+    ]);
+    const isKnown = (uuid: string): boolean =>
+        known.has(uuid) || BUILTIN.has(uuid.split('@')[0]);
+
+    const missing: string[] = [];
+    for (const f of allFiles.filter((x) => /\.(prefab|scene)$/.test(x))) {
+        const raw = readFileSync(f, 'utf8');
+        for (const m of raw.matchAll(/"__uuid__":\s*"([^"]+)"/g)) {
+            if (!isKnown(m[1])) {
+                missing.push(`${relative(REPO, f)} → ${m[1]}`);
+            }
+        }
+    }
+    check('资源1 无悬空 __uuid__（资产库已删资源在重建资源库/出包后表现为 spriteFrame=null → 隐形钉）',
+        missing.length === 0, missing.slice(0, 8).join('; '));
+}
+
 
 console.log(`\n解析 ${SCENE_PATH}：${scene.length} 个序列化对象 / ${nodes.length} 个节点。`);
 if (failed > 0) {

@@ -45,6 +45,13 @@ export class EnergyLabelController extends Component {
         if (!labelNode.getComponent(EnergyLabelController)) {
             labelNode.addComponent(EnergyLabelController);
         }
+        // 顶部 HUD 两行式布局（修复重叠）：能量钉在第二行左侧（场景旧坐标与城堡/波次同层挤叠）
+        const label = labelNode.getComponent(Label);
+        if (label) {
+            label.fontSize = 24;
+            label.lineHeight = 28;
+        }
+        labelNode.setPosition(-250, 562, 0);
     }
 
     protected start(): void {

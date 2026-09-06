@@ -1,5 +1,5 @@
 import { _decorator, Component, Node, Collider2D, Contact2DType, IPhysics2DContact, RigidBody2D,
-    Vec2, Vec3, Color, Sprite, Enum, instantiate, find, MotionStreak, builtinResMgr,
+    Vec2, Vec3, Color, Graphics, Sprite, Enum, gfx, instantiate, find, MotionStreak, builtinResMgr,
     SpriteFrame, Texture2D, UITransform } from 'cc';
 import { AudioManager, FIRE_SFX_COIN } from '../Core/AudioManager';
 import { FloatingTextManager } from '../Core/FloatingTextManager';
@@ -11,6 +11,7 @@ import { EnemyManager } from '../Battle/EnemyManager';
 import { EnemyController } from '../Battle/EnemyController';
 import { OrbType, FunnelType, RelicType } from '../Core/DataModels';
 import { OrbBalance } from '../Core/OrbBalance';
+import { LevelManager } from '../Core/LevelManager';
 import { RelicManager } from '../Core/RelicManager';
 import { orbTrailColor, Theme } from '../Core/ArtTheme';
 import { RuntimeTex } from '../Core/RuntimeTex';
@@ -126,6 +127,17 @@ export class OrbController extends Component {
     /** 已进入销毁流程：掉落保底与碰撞回调共用同一生命周期守卫 */
     private _destroying = false;
 
+    /**
+     * ★ 渲染契约（2026-09-05 选项B根修，与 PegComponent 同构）：球体本体的可见性由子节点
+     *   OrbBody 的 Graphics 矢量实心圆盘无条件保证，不挂、不依赖主节点 Sprite / 任何贴图。
+     *   必须挂子节点——Graphics 与 MotionStreak 同为 renderable，同节点互斥（见 setupMotionStreak）。
+     */
+    private _bodyArt: Graphics | null = null;
+    /** 本体当前填充色（球种主题色 / 受击闪色）；克隆持有，避免改写 Theme 共享实例 */
+    private _tint: Color = Theme.orb.normal.clone();
+    /** 本体绘制半径（UITransform 半宽，兜底 12） */
+    private _bodyRadius = 12;
+
     protected onLoad(): void {
         // 尽早开启接触监听：Box2D 只有 RigidBody2D.enabledContactListener === true 的刚体
         // 才会派发 BEGIN_CONTACT（见 shape-2d / physics-contact），任何来源的弹珠都保证能收到碰撞。
@@ -185,22 +197,23 @@ export class OrbController extends Component {
         if (this._destroying) {
             return;
         }
+        // ★ 选项B根修（2026-09-05）：不再自愈主节点 Sprite——Orb.prefab 的悬空贴图引用
+        //   （uuid f12a23c4…）已随 Sprite 组件一并移除；球体可见性由 redrawBody 的 Graphics
+        //   实心圆盘无条件保证（零贴图、零运行时纹理上传），受击闪色链路同步迁至 _tint。
         this.orbType = type;
         // 每颗球实例化时读取当前运行时配置，保证基础伤害升级跨波次生效。
         this.accumulatedDamage = OrbBalance.configFor(type as OrbType).baseDamage;
         // 赋型时同步开启接触监听（幂等）：确保实例化后任何时机都早于首次物理 step 生效
         this.enableContactListener();
-        const sp = this.getComponent(Sprite);
+        // 本体绘制半径：取 UITransform 半宽（球体 24×24 → 12），兜底 12
+        const ui = this.node.getComponent(UITransform);
+        this._bodyRadius = ui && ui.contentSize.width > 0 ? ui.contentSize.width / 2 : 12;
         const rb = this.getComponent(RigidBody2D);
         if (type === OrbType.Lightning) {
-            if (sp) {
-                sp.color = Theme.orb.lightning; // 纯青蓝电光色
-            }
+            this._tint.set(Theme.orb.lightning); // 纯青蓝电光色
             this.node.name = 'LightningOrb';
         } else if (type === OrbType.Lava) {
-            if (sp) {
-                sp.color = Theme.orb.lava; // 熔岩火红色
-            }
+            this._tint.set(Theme.orb.lava); // 熔岩火红色
             this.node.setScale(new Vec3(OrbBalance.lava.scale, OrbBalance.lava.scale, 1));
             if (rb) {
                 rb.gravityScale = OrbBalance.lava.gravityScale;
@@ -210,15 +223,11 @@ export class OrbController extends Component {
                 collider.density = OrbBalance.lava.density;
             }
         } else if (type === OrbType.Frost) {
-            if (sp) {
-                sp.color = Theme.orb.frost; // 极淡冰蓝 #E0F7FA
-            }
+            this._tint.set(Theme.orb.frost); // 极淡冰蓝 #E0F7FA
             this.node.name = 'FrostOrb';
         } else if (type === OrbType.Plasma) {
             // 🌳 等离子球：等离紫 + 略重物理（无视护盾的签名机制在 EnemyController.takeDamage 兑现）
-            if (sp) {
-                sp.color = Theme.orb.plasma;
-            }
+            this._tint.set(Theme.orb.plasma);
             this.node.setScale(new Vec3(OrbBalance.plasma.scale, OrbBalance.plasma.scale, 1));
             if (rb) {
                 rb.gravityScale = OrbBalance.plasma.gravityScale;
@@ -230,9 +239,7 @@ export class OrbController extends Component {
             this.node.name = 'PlasmaOrb';
         } else if (type === OrbType.Magma) {
             // 🌳 熔核球：洋红 + 超重重压（高能量累积 + 剥坚盾 3 层，在 EnemyController 兑现）
-            if (sp) {
-                sp.color = Theme.orb.magma;
-            }
+            this._tint.set(Theme.orb.magma);
             this.node.setScale(new Vec3(OrbBalance.magma.scale, OrbBalance.magma.scale, 1));
             if (rb) {
                 rb.gravityScale = OrbBalance.magma.gravityScale;
@@ -244,17 +251,16 @@ export class OrbController extends Component {
             this.node.name = 'MagmaOrb';
         } else if (type === OrbType.Leech) {
             // 🌳 吸血球：翠绿 + 普通物理（回血机制在 TurretController 命中后兑现，不改伤害分配）
-            if (sp) {
-                sp.color = Theme.orb.leech;
-            }
+            this._tint.set(Theme.orb.leech);
             this.node.name = 'LeechOrb';
         } else if (type === OrbType.Normal) {
-            if (sp) {
-                // ★ 美术修复：普通球本体此前沿用 Prefab 烘焙的 #2DACE7 蓝，
-                //   与「银白」拖尾/瞄准线语义矛盾 → 统一为主题银白
-                sp.color = Theme.orb.normal;
-            }
+            // ★ 美术修复：普通球本体此前沿用 Prefab 烘焙的 #2DACE7 蓝，
+            //   与「银白」拖尾/瞄准线语义矛盾 → 统一为主题银白
+            this._tint.set(Theme.orb.normal);
         }
+
+        // ★ 本体实心圆盘 + 高光（可见性的唯一保证，幂等）
+        this.redrawBody();
 
         // ★ 弹珠辉光叠层（柔光体积感，幂等）
         this.setupOrbGlow(type);
@@ -264,20 +270,73 @@ export class OrbController extends Component {
     }
 
     /**
+     * 取（幂等创建）OrbBody 绘制层子节点。
+     * ★ 必须挂子节点：Graphics 与 MotionStreak 同为 renderable 组件，同节点互斥
+     *   （见 setupMotionStreak 的历史坑）；子节点随父节点移动，位置天然跟随。
+     */
+    private ensureBodyArt(): Graphics | null {
+        if (this._bodyArt?.isValid) {
+            return this._bodyArt;
+        }
+        if (!this.node?.isValid) {
+            return null;
+        }
+        let child = this.node.getChildByName('OrbBody');
+        if (!child?.isValid) {
+            child = new Node('OrbBody');
+            child.layer = this.node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
+            child.addComponent(UITransform);
+            this.node.addChild(child);
+        }
+        this._bodyArt = child.getComponent(Graphics) ?? child.addComponent(Graphics);
+        return this._bodyArt;
+    }
+
+    /**
+     * 重绘球体本体（状态变化时整体重绘，零逐帧开销）：
+     * ⓪ 实心圆盘：球体可见性的**唯一保证**，纯矢量填充，不依赖任何贴图 / 运行时纹理上传；
+     * ① 左上高光小圆点：给实心圆盘一点球体立体感（同样零贴图）。
+     */
+    private redrawBody(): void {
+        const g = this.ensureBodyArt();
+        if (!g?.isValid) {
+            return;
+        }
+        const r = Math.max(1, this._bodyRadius);
+        g.clear();
+        g.fillColor = this._tint;
+        g.circle(0, 0, r);
+        g.fill();
+        g.fillColor = Theme.orb.normal;
+        g.circle(-r * 0.3, r * 0.3, r * 0.28);
+        g.fill();
+    }
+
+    /**
      * 按球种动态挂载/更新 MotionStreak 拖尾（幂等：重复赋型不会重复添加组件）。
-     * 纯代码零资源依赖：拖尾纹理取内置纯白贴图（default_sprite_splash），经 color 染色即纯色流光；
-     * fastMode 保持 false → 顶点色随 fadeTime 渐隐，拖尾尾端自然消散。
+     * ★ 必须挂子节点 OrbTrail（2026-09-05 根修）：MotionStreak 与 Sprite 同为 renderable 组件，
+     *   同节点互斥——此前直接 addComponent 到本节点（已挂 Sprite），引擎每次激活都拒绝注册并
+     *   刷屏「Can't add renderable component to this node because it already have one.」（每次发射
+     *   一条），且拖尾注册被拒后从未真正渲染。与 TurretController.createBulletNode 的
+     *   BulletTrail 同款子节点方案；子节点随父节点移动，拖尾跟随正确。
+     * 纯代码零资源依赖：拖尾纹理优先 RuntimeTex 程序化截面（横向柔边 + 两端收口），
+     * 生成失败时回退内置纯白贴图（ui-sprite-frame）；fastMode 保持 false → 顶点色随
+     * fadeTime 渐隐，拖尾尾端自然消散。
      */
     private setupMotionStreak(type: number): void {
         if (this._destroying) {
             return;
         }
-        let streak = this.getComponent(MotionStreak);
+        let trail = this.node.getChildByName('OrbTrail');
+        if (!trail?.isValid) {
+            trail = new Node('OrbTrail');
+            trail.layer = this.node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
+            trail.addComponent(UITransform);
+            this.node.addChild(trail);
+        }
+        const streak = trail.getComponent(MotionStreak) ?? trail.addComponent(MotionStreak);
         if (!streak) {
-            streak = this.addComponent(MotionStreak);
-            if (!streak) {
-                return;
-            }
+            return;
         }
         // ★ 柔边拖尾：优先用 RuntimeTex 程序化截面纹理（横向柔边 + 两端收口），
         //   生成失败时回退内置纯白贴图（ui-sprite-frame）
@@ -318,10 +377,11 @@ export class OrbController extends Component {
             sp.spriteFrame = glowSF;
             sp.sizeMode = Sprite.SizeMode.CUSTOM;
             sp.trim = false;
-            const mat = RuntimeTex.additiveMaterial();
-            if (mat) {
-                sp.customMaterial = mat;
-            }
+            // ★ 加法混合（2026-09-05）：直接设 Sprite 混合因子（引擎原生路径，_updateBlendFunc
+            //   会在材质实例上正确叠加）。自建 customMaterial 的 blendState 覆盖会整体替换
+            //   BlendTarget，实测把辉光渲染成不透明方块（弹珠变方块的回归根因）。
+            sp.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
+            sp.dstBlendFactor = gfx.BlendFactor.ONE;
             glow.setParent(this.node);
         }
         const glowSp = glow.getComponent(Sprite);
@@ -340,10 +400,9 @@ export class OrbController extends Component {
             dsp.spriteFrame = glowSF;
             dsp.sizeMode = Sprite.SizeMode.CUSTOM;
             dsp.trim = false;
-            const mat = RuntimeTex.additiveMaterial();
-            if (mat) {
-                dsp.customMaterial = mat;
-            }
+            // 加法混合：同 OrbGlow，走 Sprite 混合因子（引擎原生路径）
+            dsp.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
+            dsp.dstBlendFactor = gfx.BlendFactor.ONE;
             dot.getComponent(UITransform)?.setContentSize(14, 14);
             dot.setPosition(-6, 6, 0);
             dot.setParent(this.node);
@@ -567,7 +626,17 @@ export class OrbController extends Component {
             const enemy = EnemyManager.instance?.getFrontEnemy();
             if (enemy) {
                 this._comboBurstFired = true;
-                enemy.takeFreeDamage(LIGHTNING_COMBO_DAMAGE);
+                // ★ 延迟一帧结算（2026-09-05 根修）：本方法跑在 onBeginContact 的物理锁定栈内，
+                //   同步击杀最后一只敌人会就地触发波次结算 → recycleAllOrbs / REWARD_SELECTED →
+                //   PegBoardManager.generateBoard（21 颗带 RigidBody2D 的新钉在物理 step 中途
+                //   激活），刷屏「Can not active RigidBody in contract listener」且钉板在 step 内
+                //   被整体替换。scheduleOnce(0) 把伤害结算挪到物理 step 之后
+                //   （守卫：敌人仍存活、弹珠未进入销毁流程）。
+                this.scheduleOnce(() => {
+                    if (enemy.node?.isValid && !this._destroying) {
+                        enemy.takeFreeDamage(LIGHTNING_COMBO_DAMAGE);
+                    }
+                }, 0);
             }
         }
         if (this.orbType === OrbType.Lightning) {
@@ -579,15 +648,13 @@ export class OrbController extends Component {
 
     /** Lightning 轻微电击反馈；未来可在此接入连锁目标选择，不改变当前伤害流程。 */
     private playLightningHitFeedback(): void {
-        const sprite = this.getComponent(Sprite);
-        if (!sprite?.isValid) {
-            return;
-        }
-        const origin = sprite.color.clone();
-        sprite.color = Theme.orb.lightningFlash;
+        const origin = this._tint.clone();
+        this._tint.set(Theme.orb.lightningFlash);
+        this.redrawBody();
         this.scheduleOnce(() => {
-            if (sprite.isValid && !this._destroying) {
-                sprite.color = origin;
+            if (this.node?.isValid && !this._destroying) {
+                this._tint.set(origin);
+                this.redrawBody();
             }
         }, 0.05);
     }
@@ -613,15 +680,13 @@ export class OrbController extends Component {
 
     /** Lava 小型爆燃反馈；未来范围伤害 / 灼烧可从此扩展，不在本阶段改变战斗结算。 */
     private playLavaHitFeedback(): void {
-        const sprite = this.getComponent(Sprite);
-        if (!sprite?.isValid) {
-            return;
-        }
-        const origin = sprite.color.clone();
-        sprite.color = Theme.orb.lavaFlash;
+        const origin = this._tint.clone();
+        this._tint.set(Theme.orb.lavaFlash);
+        this.redrawBody();
         this.scheduleOnce(() => {
-            if (sprite.isValid && !this._destroying) {
-                sprite.color = origin;
+            if (this.node?.isValid && !this._destroying) {
+                this._tint.set(origin);
+                this.redrawBody();
             }
         }, 0.08);
     }
@@ -645,10 +710,10 @@ export class OrbController extends Component {
         this._funnelEntered = true;
         this._destroying = true;
 
-        // 伤害保底 50。漏斗倍率在此处一次性乘入（含「重炮超载」卡倍率），
+        // 伤害保底随章节衰减（难度方案A：第 1~3 章教学期 50，第 4 章起 25）。漏斗倍率在此处一次性乘入（含「重炮超载」卡倍率），
         // 敌方 takeDamage 只收最终伤害 + 珠子类型，不再感知漏斗语义。
         const type = funnel ? funnel.funnelType : this.inferFunnelType();
-        const base = Math.max(this.accumulatedDamage, 50);
+        const base = Math.max(this.accumulatedDamage, LevelManager.getDamageFloor());
         let damage = base;
         if (type === FunnelType.HeavyCannon) {
             damage = damage * FUNNEL_FOCUS_MULT * EnemyController.heavyOverloadMult;
@@ -668,7 +733,7 @@ export class OrbController extends Component {
             const multStr = (Math.round(mult * 100) / 100).toString();
             // 第一段：基础伤害 × 漏斗倍率（普通小字，白色）
             FloatingTextManager.instance?.showText(
-                `⚡${Math.round(base)} ×${multStr}`, pos, Color.WHITE, false,
+                `${Math.round(base)} ×${multStr}`, pos, Theme.white, false,
             );
             // 第二段：最终总伤（暴击大字，颜色跟随球种拖尾色）
             FloatingTextManager.instance?.showText(
@@ -694,9 +759,9 @@ export class OrbController extends Component {
             } else {
                 EventBus.emit(GameEvents.GAIN_GOLD, { amount: GOLD_REWARD_AMOUNT });
             }
-            // ★ 金币槽入槽跳字：+20 💰 金色暴击大字（漏斗槽位置；保底路径用弹珠自身位置兜底）
+            // ★ 金币槽入槽跳字：+20 金色暴击大字（漏斗槽位置；保底路径用弹珠自身位置兜底）
             const coinTextPos = funnel?.node.worldPosition ?? this.node.worldPosition;
-            FloatingTextManager.instance?.showText('+20 💰', coinTextPos, Color.YELLOW, true);
+            FloatingTextManager.instance?.showText(`+${GOLD_REWARD_AMOUNT} 金币`, coinTextPos, Theme.ui.gold, true);
             // ★ 金币槽专属 Ching 音效：开火音已改为跟随珠子类型，此处补发金币槽入槽声
             AudioManager.playFire(FIRE_SFX_COIN);
         }
@@ -707,12 +772,17 @@ export class OrbController extends Component {
             DeckManager.instance?.discardOrbType(this.orbType);
         }
 
-        // ★ 销毁前第一时间禁用碰撞体：防止帧尾物理残留（本帧剩余 contact 回调 / 下帧碰撞）继续触发逻辑
-        if (this._collider?.isValid) {
-            this._collider.enabled = false;
-        }
-
-        this.node.destroy();
+        // ★ 延迟销毁（2026-09-05 第二轮根修）：引擎 Node.destroy() 内部第一步就是
+        //   this.active = false（同步失活！只有内存销毁才延迟到帧末）——在漏斗 onBeginContact
+        //   的物理锁定栈内销毁自己，会立即触发 RigidBody2D.onDisable → b2 setActive(false)，
+        //   刷屏「Can not active RigidBody in contract listener」。scheduleOnce(0) 把失活挪到
+        //   物理 step 之外；这 1 帧物理存续期内 _funnelEntered/_destroying 双守卫保证其余
+        //   contact 回调与 update 兜底全部空跑，不会重复结算。
+        this.scheduleOnce(() => {
+            if (this.node?.isValid) {
+                this.node.destroy();
+            }
+        }, 0);
     }
 
     /** 按 x 坐标判定落槽：x < -80 聚能（红），x > 80 金币，中间精炼（蓝） */

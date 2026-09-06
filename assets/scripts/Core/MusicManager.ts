@@ -104,6 +104,9 @@ export class MusicManager {
         if (MusicManager._running || MusicManager._ended) {
             return;
         }
+        if (!AudioManager.musicEnabled) {
+            return; // ⚙ 音乐关：不起播（设置面板开关即时生效，恢复走 applyEnabled）
+        }
         if (typeof window === 'undefined') {
             return; // 原生端 / node 等无 Web Audio 环境：静默降级
         }
@@ -127,6 +130,21 @@ export class MusicManager {
         MusicManager._running = false;
         clearInterval(MusicManager._timer);
         MusicManager._timer = 0;
+    }
+
+    /**
+     * ⚙ 音乐开关即时生效（SettingsDialog 切换音乐开关后调用）：
+     * 关 → 停播调度器（stinger 不受影响，终局反馈照常）；
+     * 开 → 未终局则恢复起播（_start 内部处理未解锁/待对齐，无爆发补排）。
+     */
+    public static applyEnabled(): void {
+        if (!AudioManager.musicEnabled) {
+            MusicManager._stop();
+            return;
+        }
+        if (!MusicManager._ended) {
+            MusicManager._start();
+        }
     }
 
     /** 前瞻排程：把未来 LOOKAHEAD 秒内的八分步全部挂上 ctx 时间轴 */
@@ -226,6 +244,9 @@ export class MusicManager {
 
     /** 终局 stinger：等间隔上行/下行音阶 + 收尾长和弦（走独立总线，即时可闻） */
     private static _playStinger(notes: readonly number[], win: boolean): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：终局 stinger 一并静默（归属音效侧，不随音乐开关）
+        }
         const ctx = AudioManager.context;
         if (!ctx) {
             return;

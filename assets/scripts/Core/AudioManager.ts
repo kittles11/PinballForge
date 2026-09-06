@@ -1,4 +1,4 @@
-import { AudioClip, resources } from 'cc';
+import { AudioClip, resources, sys } from 'cc';
 import { EventBus, GameEvents } from './EventBus';
 import type { GameEventMap } from './EventBus';
 import { OrbType } from './DataModels';
@@ -46,6 +46,61 @@ export class AudioManager {
     private static ctx: AudioContext | null = null;
     /** 是否已完成解锁（resume 成功或本就在 running） */
     private static isUnlocked = false;
+
+    // ---------- ⚙ 音频设置（设置面板开关；独立存档 key 即时持久化，与 CoinManager 主档解耦） ----------
+    /** 音效开关缓存（启动时从存档读，key: sfx_enabled） */
+    private static sfxOn = true;
+    /** 音乐开关缓存（启动时从存档读，key: music_enabled） */
+    private static musicOn = true;
+    /** 两个开关的存档 key（system 数据卷） */
+    private static readonly SFX_KEY = 'sfx_enabled';
+    private static readonly MUSIC_KEY = 'music_enabled';
+    /** 设置项是否已从存档加载（懒加载一次） */
+    private static settingsLoaded = false;
+
+    /** 音效开关（设置面板读写；true/false 即时生效：播放入口首行门禁消费） */
+    public static get sfxEnabled(): boolean {
+        AudioManager.ensureSettingsLoaded();
+        return AudioManager.sfxOn;
+    }
+
+    /** 音乐开关（设置面板读写；true/false 即时生效：MusicManager.applyEnabled 消费） */
+    public static get musicEnabled(): boolean {
+        AudioManager.ensureSettingsLoaded();
+        return AudioManager.musicOn;
+    }
+
+    /** 写音效开关：缓存 + 立即落存档（下一帧起所有 play* 入口静默） */
+    public static setSfxEnabled(on: boolean): void {
+        AudioManager.ensureSettingsLoaded();
+        AudioManager.sfxOn = on;
+        try {
+            sys.localStorage.setItem(AudioManager.SFX_KEY, on ? '1' : '0');
+        } catch (e) { /* 存档失败不阻断开关（与 DailyTaskManager.save 同款降级） */ }
+        console.log(`[AudioManager] ⚙ 音效开关 → ${on ? '开' : '关'}（已存档）`);
+    }
+
+    /** 写音乐开关：缓存 + 立即落存档（调用方紧接着走 MusicManager.applyEnabled 即时停播/恢复） */
+    public static setMusicEnabled(on: boolean): void {
+        AudioManager.ensureSettingsLoaded();
+        AudioManager.musicOn = on;
+        try {
+            sys.localStorage.setItem(AudioManager.MUSIC_KEY, on ? '1' : '0');
+        } catch (e) { /* 存档失败不阻断开关 */ }
+        console.log(`[AudioManager] ⚙ 音乐开关 → ${on ? '开' : '关'}（已存档）`);
+    }
+
+    /** 懒加载音频设置（首次读取开关时执行一次；读档失败保持默认开） */
+    private static ensureSettingsLoaded(): void {
+        if (AudioManager.settingsLoaded) {
+            return;
+        }
+        AudioManager.settingsLoaded = true;
+        try {
+            AudioManager.sfxOn = sys.localStorage.getItem(AudioManager.SFX_KEY) !== '0'; // 无记录(null) → 开
+            AudioManager.musicOn = sys.localStorage.getItem(AudioManager.MUSIC_KEY) !== '0';
+        } catch (e) { /* 读档失败保持默认开 */ }
+    }
 
     // ---------- 绝对解锁 ----------
 
@@ -182,6 +237,9 @@ export class AudioManager {
      * @param combo 连击计数（1 起）：播放速率随连击爬升，听感越来越高亢；mp3 不可用/404 时自动降级为合成叮当。
      */
     public static playHit(combo = 1): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默（设置面板开关，独立存档即时生效）
+        }
         // ★ 音效节流：35ms 内连续碰撞静默跳过发声，避免雷球分裂多球/高频连击同时撞钉
         //   导致音频线程被大量 <audio>.play() 调用堵塞，造成掉帧卡顿。
         if (typeof performance !== 'undefined' && performance.now) {
@@ -221,6 +279,9 @@ export class AudioManager {
      * @param combo 连击计数：基频随连击爬升，合成锐利清脆的高频「叮」。
      */
     public static playSynthDing(combo = 1): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
         AudioManager.unlockAudio();
         const ctx = AudioManager.ctx;
         if (!ctx) {
@@ -281,6 +342,9 @@ export class AudioManager {
 
     /** 怪物撞击城堡：低沉肉搏重击声（三角波 160Hz 深坠到 40Hz） */
     public static playMonsterAttack(): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
         AudioManager.unlockAudio();
         const ctx = AudioManager.ctx;
         if (!ctx) {
@@ -312,6 +376,9 @@ export class AudioManager {
 
     /** 城堡爆炸：深沉剧烈爆炸轰鸣（锯齿波 220Hz 深坠到 30Hz，0.5s 长震） */
     public static playCastleExplode(): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
         AudioManager.unlockAudio();
         const ctx = AudioManager.ctx;
         if (!ctx) {
@@ -344,6 +411,9 @@ export class AudioManager {
      * 金币槽专属 Ching 用独立编号 FIRE_SFX_COIN（漏斗不再决定音效）。
      */
     public static playFire(type: number): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
         AudioManager.unlockAudio(); // 绝对解锁：与钉子音保持一致的强制激活
         if (!AudioManager.ctx) {
             return;

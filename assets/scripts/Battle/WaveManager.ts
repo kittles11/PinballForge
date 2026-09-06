@@ -1,19 +1,25 @@
 import {
-    _decorator, Component, Node, Prefab, instantiate, Label,
-    Color, Graphics, UITransform,
+    _decorator, Component, Node, Prefab, instantiate, Label, find,
+    Color, Graphics, UITransform, Vec3,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
+import { anyModalOpen } from '../Core/ModalGate';
 import { EnemyController } from './EnemyController';
 import {
     WaveDef, RelicType, EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, rollEnemyType,
-    rollEliteAffix, AFFIX_STATS,
+    rollEliteAffixes,
 } from '../Core/DataModels';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, CROWN_GOLD_AMOUNT, CROWN_SHIELD_AMOUNT } from '../Core/RelicManager';
 import { OrbController } from '../Pinball/OrbController';
+import { RewardDialog } from '../UI/RewardDialog';
 import { GoldManager } from '../Core/GoldManager';
 import { CastleController } from './CastleController';
 import { Theme } from '../Core/ArtTheme';
+import { FxManager } from '../Core/FxManager';
+import { CameraShake } from '../Core/CameraShake';
+import { FloatingTextManager } from '../Core/FloatingTextManager';
+import { HitStop } from '../Core/HitStop';
 
 const { ccclass, property } = _decorator;
 
@@ -29,8 +35,11 @@ const MINI_SLIME_HP_RATIO = 0.35;
 const MINI_SLIME_SCALE = 0.55;
 /** 🦠 分裂小怪在母体左右两侧的错开距离（px） */
 const MINI_SLIME_OFFSET_X = 30;
-/** 攻城基础伤害（各类敌人 = 基础 × ENEMY_TYPE_STATS.attackDamageMult） */
-const WAVE_BASE_ATTACK_DAMAGE = 10;
+// 攻城基础伤害已随章节成长（难度方案B），唯一真源在 LevelManager.getBaseAttackDamage()，此处不再私有常量避免两处漂移。
+/** 每波开始补贴金币（发射已免费，此补贴为纯商店收入打底：约每波 1/9 张商店卡片的购买力） */
+const WAVE_SHOT_SUBSIDY = 9;
+/** 🐕 结算看门狗延迟（秒）：SHOW_REWARDS 派发后弹窗仍未激活时的重发检查间隔 */
+const REWARD_WATCHDOG_DELAY = 3;
 
 /**
  * 波次管理器：挂载在 BattleLayer/EnemyContainer 节点上。
@@ -39,7 +48,7 @@ const WAVE_BASE_ATTACK_DAMAGE = 10;
  *   第 1 章第 1 波纯普通怪教学）；👹 Boss 波（章节第 10 关第 3 波）固定出章节大 Boss；
  *   类型数值唯一真源见 DataModels.ENEMY_TYPE_STATS；
  * - 监听 ENEMY_KILLED 结算 + ENEMY_SPLIT 扩容本波总数（史莱姆死亡分裂 2 只小怪）；
- *   本波全灭后弹出战后卡牌奖励，选择后进入下一波；最后一波完成则广播 GAME_VICTORY。
+ *   本波全灭后：非末波直接推进（难度调整：三选一收敛为每关一次），最后一波完成则弹出战后奖励 / 广播 GAME_VICTORY。
  */
 // 每关固定波数唯一真源为 LevelManager 导出的 WAVES_PER_LEVEL，此处不再私有重复，避免两处常量漂移造成波次表错位；maxWaves 默认值即从该真源取得。
 @ccclass('WaveManager')
@@ -78,6 +87,8 @@ export class WaveManager extends Component {
         EventBus.on(GameEvents.ENEMY_SPLIT, this.onEnemySplit, this);
         EventBus.on(GameEvents.REWARD_SELECTED, this.onRewardSelected, this);
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
+        EventBus.on(GameEvents.RUN_REVIVED, this.onRunRevived, this);
+        EventBus.on(GameEvents.RUN_CONTINUED, this.onRunContinued, this);
     }
 
     protected start(): void {
@@ -91,9 +102,11 @@ export class WaveManager extends Component {
             }
         }
         this.startWave(1);
-        // 顶部 HUD 布局：波次 / 进度文本水平居中，与居左的城堡血量、靠右的金币错开避免重叠
+        // 顶部 HUD 两行式布局（修复文字重叠）：第一行 y=606 城堡/金币/徽章，第二行 y=562 能量/波次
         if (this.waveLabel?.isValid) {
-            this.waveLabel.node.setPosition(0, 590, 0);
+            this.waveLabel.node.setPosition(0, 562, 0);
+            this.waveLabel.fontSize = 22;
+            this.waveLabel.lineHeight = 26;
         }
     }
     protected onDestroy(): void {
@@ -112,6 +125,50 @@ export class WaveManager extends Component {
         this.unscheduleAllCallbacks();
     }
 
+    /** 清空场上全部敌人节点（复活 / 续战前清场；走 onDestroy 注销，不算击杀不掉落） */
+    private clearEnemies(): void {
+        for (const child of [...this.node.children]) {
+            if (child.isValid && child.getComponent(EnemyController)) {
+                child.destroy();
+            }
+        }
+    }
+
+    /**
+     * 📺 广告复活（RUN_REVIVED，ResultDialog 发起）：撤销本次失败，原地继续本局。
+     * 残余敌人整体清掉（GAME_OVER 监听里被冻结的活体一并销毁，新怪自带干净状态），
+     * 然后重开当前波（杀敌计数随 startWave 归零重刷）；城堡复活由 CastleController 处理。
+     */
+    private onRunRevived(): void {
+        if (!this.node?.isValid || !this._gameOver) {
+            return; // 未处于终局态：与本次复活无关（防御）
+        }
+        this._gameOver = false;
+        this._runSettled = false;
+        this._waveSettled = false;
+        this.clearEnemies();
+        this.startWave(this.currentWave);
+        console.log(`[Wave] 📺 广告复活：清场后重开第 ${this.currentWave} 波`);
+    }
+
+    /**
+     * 🌌 无尽续战（RUN_CONTINUED，ResultDialog 发起）：终局胜利后不重载场景继续爬层。
+     * LevelManager.enterEndless() 已把进度切到无尽，这里清场并从第 1 波重新起跑；
+     * 牌组 / 遗物 / 金币 / DDA 全部原地延续，故本方法不做任何构筑重置。
+     */
+    private onRunContinued(): void {
+        if (!this.node?.isValid) {
+            return;
+        }
+        this._gameOver = false;
+        this._runSettled = false;
+        this._waveSettled = false;
+        this.clearEnemies();
+        this.currentWave = 1;
+        this.startWave(1);
+        console.log('[Wave] 🌌 无尽模式续战：清场后从第 1 波重新起跑（构筑延续）');
+    }
+
     /** 开启指定波次：刷新文本并按 LevelManager 自适应的波次配置按间隔出怪 */
     public startWave(waveIndex: number): void {
         if (this._gameOver || this._runSettled || waveIndex < 1 || waveIndex > this.maxWaves) {
@@ -126,6 +183,8 @@ export class WaveManager extends Component {
         // ★ 使用 LevelManager 自适应的波次配置（血量 / 移速 / Boss 随章节·关卡成长）
         const def = LevelManager.getWaveConfig(waveIndex);
         this.waveTotalEnemies = def.count;
+        // 🎯 发射经济：每波开始补贴 9 金（≈3 发），发射消耗金币后这就是保底弹药
+        GoldManager.instance?.addGold(WAVE_SHOT_SUBSIDY);
         if (this.waveLabel?.isValid) {
             this.waveLabel.string = `波次: ${waveIndex}/${this.maxWaves} · ${LevelManager.getProgressText()}`;
         }
@@ -172,18 +231,30 @@ export class WaveManager extends Component {
         ec.maxHp = Math.max(1, Math.round(def.hp * stats.hpMult));
         ec.currentHp = ec.maxHp; // 显式同步当前血量（onLoad 已按 maxHp 同步，此处双保险）
         ec.moveSpeed = stats.speedOverride > 0 ? stats.speedOverride : def.speed;
-        ec.attackDamage = Math.max(1, Math.round(WAVE_BASE_ATTACK_DAMAGE * stats.attackDamageMult));
+        ec.attackDamage = Math.max(1, Math.round(LevelManager.getBaseAttackDamage() * stats.attackDamageMult));
         enemy.setScale(stats.scale, stats.scale, 1);
-        // 🎖️ 精英波（每关第 3 波非 Boss）：掷一条已解锁词缀，把"大一号血包"变成机制怪
+        // 🎖️ 精英波（每关第 3 波非 Boss）：按章节掷一组去重词缀（难度方案B：第 10 章起 2 条 / 第 25 章起 3 条），
+        // 把"大一号血包"变成机制怪；applyAffix 在节点激活前调用，onLoad 护盾弧可读到叠加层数
         if (def.isElite && !def.isBoss) {
-            const affix = rollEliteAffix(LevelManager.currentChapter);
-            if (affix) {
-                ec.applyAffix(affix);
+            for (const affix of rollEliteAffixes(LevelManager.currentChapter)) {
+                ec.applyAffix(affix, LevelManager.currentChapter);
             }
         }
         // 错开 Y 高度，避免同屏多怪完全重叠
         enemy.setPosition(SPAWN_X, SPAWN_Y - index * SPAWN_Y_STEP, 0);
         enemy.setParent(this.node);
+        // ★ Boss 出场演出（注意力分层顶端：运动 + 意外）：红光爆闪 + 冲击环 + 震屏 + 顿帧 + 宣告跳字；
+        //   普通/精英怪只保留既有出生反馈，不做全场级演出，保证「该看哪」的强度差
+        if (type === EnemyType.Boss) {
+            const pos = enemy.worldPosition;
+            FxManager.blast(pos, Theme.enemy.bodyFallback, 150);
+            FxManager.flash(pos, Theme.fx.redPulse, 220, 0.14);
+            CameraShake.shake(11, 0.3);
+            HitStop.stop(90);
+            FloatingTextManager.instance?.showText(
+                'Boss 来袭！', new Vec3(pos.x, pos.y - 60, pos.z), Theme.ui.red, true,
+            );
+        }
         console.log(`[Wave] 生成 ${stats.icon} ${type}：HP ${ec.maxHp} / 移速 ${ec.moveSpeed} / 攻城 ${ec.attackDamage}`);
     }
 
@@ -223,7 +294,7 @@ export class WaveManager extends Component {
         ec.maxHp = Math.max(1, Math.round(payload.hp));
         ec.currentHp = ec.maxHp;
         ec.moveSpeed = payload.speed;
-        ec.attackDamage = Math.max(1, Math.round(WAVE_BASE_ATTACK_DAMAGE * ENEMY_TYPE_STATS[EnemyType.Normal].attackDamageMult));
+        ec.attackDamage = Math.max(1, Math.round(LevelManager.getBaseAttackDamage() * ENEMY_TYPE_STATS[EnemyType.Normal].attackDamageMult));
         ec.goldOnDeath = payload.goldDrop ?? 0;
         enemy.setScale(1, 1, 1);
         // 召唤点上下错开，避免完全重叠
@@ -247,7 +318,7 @@ export class WaveManager extends Component {
         ec.maxHp = Math.max(1, Math.round(payload.hp * MINI_SLIME_HP_RATIO));
         ec.currentHp = ec.maxHp;
         ec.moveSpeed = payload.speed;
-        ec.attackDamage = Math.max(1, Math.round(WAVE_BASE_ATTACK_DAMAGE * ENEMY_TYPE_STATS[EnemyType.Slime].attackDamageMult));
+        ec.attackDamage = Math.max(1, Math.round(LevelManager.getBaseAttackDamage() * ENEMY_TYPE_STATS[EnemyType.Slime].attackDamageMult));
         enemy.setScale(MINI_SLIME_SCALE, MINI_SLIME_SCALE, 1);
         // 在母体左右两侧错开生成，避免完全重叠
         enemy.setPosition(
@@ -289,9 +360,16 @@ export class WaveManager extends Component {
         this._waveSettled = true;
         this.unscheduleAllCallbacks();
         const isLevelCleared = this.currentWave >= this.maxWaves;
+        console.log(`[Wave] 第 ${this.currentWave}/${this.maxWaves} 波全灭结算：killed=${this.waveKilledEnemies}/${this.waveTotalEnemies}，关卡清空=${isLevelCleared}`);
         // ★ 波次全灭瞬间：立刻安全回收场上所有残余弹珠，防止它们在弹窗背后继续撞钉发声、
         //    持续占物理线程。必须在派发任何弹窗事件（奖励/商店/宝箱/胜利）之前执行。
-        OrbController.recycleAllOrbs();
+        //    结算链加固（2026-09-04）：回收异常只记日志不阻断——曾出现弹窗链某环抛异常
+        //    导致 SHOW_REWARDS 永不发出、_waveSettled 挡死重入、游戏永久卡在波次间。
+        try {
+            OrbController.recycleAllOrbs();
+        } catch (e) {
+            console.error('[Wave] 残余弹珠回收异常（已隔离，不阻断结算）', e);
+        }
         // ★ 终章末关最后一波击杀 → 全游戏通关
         if (isLevelCleared && LevelManager.isFinalBattle()) {
             this._runSettled = true;
@@ -299,14 +377,80 @@ export class WaveManager extends Component {
             EventBus.emit(GameEvents.GAME_VICTORY);
             return;
         }
-        // 其余情形统一进入战后卡牌奖励 + 商店；REWARD_SELECTED 时再决定推进下一波 / 下一关
-        console.log(`[Wave] ${isLevelCleared ? '本关' : '本波'}已清空，弹出战后卡牌奖励！`);
+        // 难度调整（三选一收敛为每关一次）：仅本关最后一波弹出卡牌奖励；
+        // 第 1/2 波直接广播 REWARD_SELECTED —— WaveManager 推进下一波、PegBoardManager 重排钉板，不发奖励。
+        if (!isLevelCleared) {
+            console.log(`[Wave] 本波已清空（第 ${this.currentWave}/${this.maxWaves} 波），无奖励自动推进下一波`);
+            EventBus.emit(GameEvents.REWARD_SELECTED);
+            return;
+        }
+        // 本关清空：弹出战后卡牌奖励（第 5/10 关为遗物宝箱；3/6/9 关选完无缝转入商店）
+        console.log('[Wave] 本关已清空，弹出战后卡牌奖励（每关一次）！');
+        try {
+            EventBus.emit(GameEvents.SHOW_REWARDS);
+        } catch (e) {
+            console.error('[Wave] SHOW_REWARDS 派发异常（RewardDialog 内部出错，见上方堆栈）', e);
+        }
+        // 兜底开门：emit 后若仍无任何模态弹窗激活（监听丢失 / 弹窗节点在场景中被失活），
+        // 直接抓 RewardDialog 组件调用 showRewards（组件方法不依赖节点激活态，见方法注释）
+        this.openRewardDialogFallback();
+        // 🐕 看门狗（2026-09-04 回归兜底）：弹窗节点被 closeAllModals 失活后 start 永不执行、
+        //   SHOW_REWARDS 监听可能丢失，且 EventTarget 无监听时 emit 静默 no-op——派发后若迟迟
+        //   没有模态弹窗激活，自动重发直至弹窗打开或玩家推进，绝不让关卡推进链静默卡死。
+        this.scheduleOnce(this.checkRewardWatchdog, REWARD_WATCHDOG_DELAY);
+    }
+
+    /** 🐕 结算看门狗：SHOW_REWARDS 派发后弹窗仍未激活 → 重发（自愈循环：弹窗打开或玩家推进后自动停止） */
+    private checkRewardWatchdog(): void {
+        if (this._gameOver || this._runSettled || !this._waveSettled) {
+            return; // 已终局 / 已选卡推进：无需兜底
+        }
+        if (anyModalOpen()) {
+            return; // 奖励 / 商店 / 结算弹窗已正常打开：交给玩家操作
+        }
+        console.warn('[Wave] 看门狗：SHOW_REWARDS 派发后弹窗未激活，自动重发（监听丢失兜底）');
+        // 先续期再重发：即使重发因监听方内部异常中断，自愈循环本身也不停转
+        this.scheduleOnce(this.checkRewardWatchdog, REWARD_WATCHDOG_DELAY);
         EventBus.emit(GameEvents.SHOW_REWARDS);
+        this.openRewardDialogFallback();
+    }
+
+    /**
+     * 🚪 兜底开门（2026-09-04 根因修复）：奖励弹窗节点在场景中被摆成 active=false 时，
+     * 组件 onLoad 永不执行（Cocos 只在节点首次激活时调用）、SHOW_REWARDS 监听注册不上，
+     * emit 永远空转——看门狗重发多少次都无济于事（三轮实测回归的共同根因）。
+     * emit 后若 RewardDialog 节点仍未激活，直接抓 RewardDialog 组件调 showRewards：
+     * 组件方法不依赖节点激活态即可调用，其内部会自行 active=true → 触发 onLoad/onEnable
+     * 补注册监听 + 绑定卡牌。事件链正常打开弹窗时按弹窗节点真实 active 直接短路
+     * （2026-09-04 1-3 回归收紧：监听悬空时 emit 静默 no-op，anyModalOpen 只能证明
+     * 「有弹窗开着」，证明不了「奖励弹窗已开」——目标节点自身状态才是唯一真源）。
+     */
+    private openRewardDialogFallback(): void {
+        if (this._gameOver || this._runSettled || !this._waveSettled) {
+            return; // 已终局 / 已推进：无需兜底
+        }
+        const node = find('Canvas/UILayer/RewardDialog');
+        if (node?.isValid && node.active) {
+            return; // 奖励弹窗确已打开（事件链正常）
+        }
+        const dialog = node?.getComponent(RewardDialog) ?? null;
+        if (dialog) {
+            console.warn('[Wave] SHOW_REWARDS 事件链未打开弹窗（监听缺失），直接调用 RewardDialog.showRewards 兜底');
+            try {
+                dialog.showRewards();
+            } catch (e) {
+                console.error('[Wave] 兜底开门异常（看门狗将继续重试）', e);
+            }
+        } else {
+            console.error('[Wave] Canvas/UILayer/RewardDialog 节点缺失，无法兜底打开奖励弹窗（请检查场景层级）');
+        }
     }
 
     /** 卡牌奖励 + 商店均已确认（ShopDialog「继续」广播）：推进到下一波，或下一关的起始波 */
     private onRewardSelected(): void {
-        if (this._gameOver || this._runSettled || !this._waveSettled) {
+        // ★ 节点有效性守卫（2026-09-04）：脚本热重载/场景重建后旧 WaveManager 实例若仍挂在
+        //   事件总线上，绝不能在已销毁组件上推进关卡（startWave 会触碰已销毁节点）——静默让位。
+        if (!this.node?.isValid || this._gameOver || this._runSettled || !this._waveSettled) {
             return;
         }
         this._waveSettled = false;

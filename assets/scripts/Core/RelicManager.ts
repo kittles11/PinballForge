@@ -39,8 +39,8 @@ export { ALL_RELIC_TYPES };
  */
 export const MAX_RELICS = ALL_RELIC_TYPES.length;
 
-/** 遗物栏锚点 Y 坐标（px）：顶部 HUD 数字之下、对战区之上，居中；与顶部三栏（城堡血量 / 波次 / 金币）错开避免重叠 */
-const RELIC_BAR_Y = 550;
+/** 遗物栏锚点 Y 坐标（px）：钉在 HUD 两行（606/562）下方、怪物走廊（480）之上，不遮挡能量/波次行 */
+const RELIC_BAR_Y = 514;
 
 /**
  * 肉鸽被动遗物全局逻辑组件（全局静态单例 + 场景可反序列化）。
@@ -164,8 +164,10 @@ export class RelicManager extends Component {
             barNode = new Node('RelicBar');
             barNode.layer = uiLayer.layer;
             uiLayer.addChild(barNode);
+            // 仅新建时钉位：场景已存在的 RelicBar 由 RelicBarController.onLoad 自钉，
+            // 此处若无条件 setPosition 会在场景启动后覆盖控制器钉出的两行式 HUD 位置（曾把遗物栏顶回 HUD 行造成遮挡）
+            barNode.setPosition(0, RELIC_BAR_Y, 0);
         }
-        barNode.setPosition(0, RELIC_BAR_Y, 0);
         if (!barNode.getComponent(RelicBarController)) {
             barNode.addComponent(RelicBarController);
         }

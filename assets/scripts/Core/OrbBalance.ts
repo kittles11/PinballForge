@@ -118,6 +118,9 @@ export class OrbBalance {
     /** 吸血球回血倍率：入槽伤害 × 此值治疗城堡（封顶 meta 奖励，需真机校准） */
     static readonly leechHealRatio = 0.25;
 
+    /** 吸血球单发回血封顶（难度方案B）：高伤构筑下 25% 转化无上限会一发回数千，封顶保持续航定位而非无敌（TurretController 兑现） */
+    static readonly leechHitHealCap = 60;
+
     /** Normal 的轻量连续撞击奖励；保持其基础定位，不与特殊球争夺强度。 */
     static readonly normalComboThreshold = 5;
     static readonly normalComboDamageBonus = 5;

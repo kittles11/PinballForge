@@ -313,10 +313,13 @@ check('ArtTheme 配色全覆盖：Theme.orb.leech + 拖尾[6] + 瞄准[6]',
 check('OrbController.initOrbType 有 Leech 分支（仅配色+命名，不进延迟密度重建）',
     /type === OrbType\.Leech/.test(orbCtrl) && /Theme\.orb\.leech/.test(orbCtrl)
     && !/this\.orbType === OrbType\.Leech/.test(orbCtrl));
-check('TurretController：Leech 命中后按 leechHealRatio 治疗城堡（单一投递点，命中才回血）',
+check('TurretController：Leech 命中后按 leechHealRatio 治疗城堡（单一投递点，命中才回血；豁免单局治疗阀门，难度方案B）',
     /data\.orbType === OrbType\.Leech/.test(strip(read('Battle', 'TurretController.ts')))
-    && /CastleController\.instance\?\.heal\(heal\)/.test(strip(read('Battle', 'TurretController.ts')))
+    && /CastleController\.instance\?\.heal\(heal, true\)/.test(strip(read('Battle', 'TurretController.ts')))
     && /dmg \* OrbBalance\.leechHealRatio/.test(strip(read('Battle', 'TurretController.ts'))));
+check('吸血单发封顶（难度方案B）：min(25%转化, leechHitHealCap=60) 在兑现处生效',
+    /Math\.min\(Math\.round\(dmg \* OrbBalance\.leechHealRatio\), OrbBalance\.leechHitHealCap\)/.test(strip(read('Battle', 'TurretController.ts')))
+    && OB.leechHitHealCap === 60);
 check('TurretController：Leech 回血附带翠绿飘字（FloatingTextManager.showText + Theme.orb.leech）',
     /FloatingTextManager\.instance\?\.showText\(/.test(strip(read('Battle', 'TurretController.ts')))
     && /Theme\.orb\.leech/.test(strip(read('Battle', 'TurretController.ts'))));

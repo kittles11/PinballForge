@@ -84,9 +84,11 @@ check('连击弹幕常量：阈值 8 / 追发伤害 50（与文案「满 8 次�
     /const LIGHTNING_COMBO_THRESHOLD = 8;/.test(orb) && /const LIGHTNING_COMBO_DAMAGE = 50;/.test(orb));
 check('连击门控四条件齐备：达阈值 / 非副球 / 未触发过 / 开关开启',
     /this\.hitCount >= LIGHTNING_COMBO_THRESHOLD\s*&& !this\.isSplitChild && !this\._comboBurstFired && OrbBalance\.lightningComboEnabled/.test(orb));
-check('追发落点：最靠前敌人（getFrontEnemy）+ 先置守卫再结算，单球至多 1 次',
+check('追发落点：最靠前敌人（getFrontEnemy）+ 先置守卫再延迟结算，单球至多 1 次',
     /const enemy = EnemyManager\.instance\?\.getFrontEnemy\(\);/.test(orb)
-    && /this\._comboBurstFired = true;\s*enemy\.takeFreeDamage\(LIGHTNING_COMBO_DAMAGE\);/.test(orb));
+    // ★ 结算必须经 scheduleOnce 出物理锁（2026-09-05 根修：同步击杀最后一只敌人会就地触发
+    //   波次结算 → 钉板在物理 step 内重建 → 「Can not active Rigidbody in contact listener」）
+    && /this\._comboBurstFired = true;\s*this\.scheduleOnce\(\(\) => \{[\s\S]{0,160}?enemy\.takeFreeDamage\(LIGHTNING_COMBO_DAMAGE\);/.test(orb));
 
 // ── ② 接线断言：下游落点真实 ──
 const peg = strip(read('Pinball', 'PegComponent.ts'));

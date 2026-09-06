@@ -29,8 +29,10 @@ export class GoldLabelController extends Component {
             console.warn('[GoldLabelController] 未找到 Label，金币显示不会更新！');
         } else {
             this._baseScale.set(this._label.node.scale);
-            // 顶部 HUD 布局：金币水平靠右，与居左的城堡血量、居中的波次错开避免重叠
-            this._label.node.setPosition(210, 590, 0);
+            // 顶部 HUD 两行式布局：金币第一行中右位（x=176），与右侧任务/背包徽章（264/314）留出间距不再被遮挡
+            this._label.node.setPosition(176, 606, 0);
+            this._label.fontSize = 24;
+            this._label.lineHeight = 28;
         }
         EventBus.on(GameEvents.GAIN_GOLD, this.onGainGold, this);
     }

@@ -9,7 +9,7 @@
  */
 import {
     _decorator, Component, Graphics, Node, Sprite, Tween, tween, UIOpacity, UITransform,
-    Vec3, Color, find,
+    Vec3, Color, gfx, find,
 } from 'cc';
 import { EventBus, GameEvents } from './EventBus';
 import { RuntimeTex } from './RuntimeTex';
@@ -125,10 +125,10 @@ export class FxManager extends Component {
             sp.sizeMode = Sprite.SizeMode.CUSTOM;
             sp.trim = false;
             sp.spriteFrame = smoke ? (RuntimeTex.smoke() ?? RuntimeTex.glow()) : RuntimeTex.glow();
-            const mat = RuntimeTex.additiveMaterial();
-            if (mat) {
-                sp.customMaterial = mat;
-            }
+            // ★ 加法混合（2026-09-05）：走 Sprite 混合因子（引擎原生路径）；自建 customMaterial
+            //   的 blendState 覆盖会整体替换 BlendTarget，实测渲染成不透明方块。
+            sp.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
+            sp.dstBlendFactor = gfx.BlendFactor.ONE;
         } else {
             node.addComponent(Graphics); // 回退：playNode 时画同心圆软光斑
         }

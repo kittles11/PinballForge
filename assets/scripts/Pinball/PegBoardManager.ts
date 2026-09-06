@@ -76,7 +76,11 @@ export class PegBoardManager extends Component {
     }
 
     private onRewardSelected(): void {
-        this.generateBoard();
+        // ★ 延迟一帧重建（2026-09-05 根修）：REWARD_SELECTED 可能在弹珠 onBeginContact 的物理
+        //   锁定栈内派发（雷球连击击杀最后一只敌人 → 波次结算 → emit），同步 generateBoard 会把
+        //   21 颗带 RigidBody2D 的新钉在物理 step 中途激活，刷屏「Can not active RigidBody in
+        //   contact listener」。scheduleOnce(0) 保证钉板重建永远跑在物理 step 之外。
+        this.scheduleOnce(() => this.generateBoard(), 0);
     }
 
     /**
@@ -147,15 +151,50 @@ export class PegBoardManager extends Component {
             types[index[bombN + multiplierN + i]] = PegType.Refresh;
         }
 
-        // 4. 批量实例化并设置坐标与类型
+        // 4. 批量实例化并设置坐标与类型（逐钉 try/catch：单钉异常不吞整板——
+        //    曾出现「钉板只剩 1 颗」的间歇性症状，靠此日志定位是实例化/设型哪一步断的）
+        let spawned = 0;
         for (let i = 0; i < total; i++) {
-            const pegNode = instantiate(this.pegPrefab);
-            pegNode.setParent(this.node);
-            pegNode.setPosition(positions[i]);
-            const peg = pegNode.getComponent(PegComponent) || pegNode.addComponent(PegComponent);
-            peg.setPegType(types[i]);
-            // 爆炸半径随本局实际横向间距自适应：保证炸药钉始终能炸掉一整圈相邻钉
-            peg.explosionRadius = Math.max(BOMB_RADIUS, spacingX * 1.2);
+            try {
+                const pegNode = instantiate(this.pegPrefab);
+                pegNode.setParent(this.node);
+                pegNode.setPosition(positions[i]);
+                const peg = pegNode.getComponent(PegComponent) || pegNode.addComponent(PegComponent);
+                peg.setPegType(types[i]);
+                // 爆炸半径随本局实际横向间距自适应：保证炸药钉始终能炸掉一整圈相邻钉
+                peg.explosionRadius = Math.max(BOMB_RADIUS, spacingX * 1.2);
+                spawned++;
+            } catch (err) {
+                console.error(`[诊断] 第 ${i} 颗钉实例化失败（已生成 ${spawned}/${total}）:`, err);
+            }
+        }
+        // ★ 可见性真实校验（2026-09-05 根修）：旧日志只数「实生成 21」，把「节点建出来了却一个
+        //   都看不见」的隐形钉故障掩盖成生成成功——这正是该问题反复修不掉的直接原因。
+        //   此后「生成成功」必须等于「全部可渲染」，并逐钉报出真实渲染状态供定位。
+        let visible = 0;
+        const invisible: string[] = [];
+        for (const child of this.node.children) {
+            const peg = child.getComponent(PegComponent);
+            if (!peg) {
+                continue;
+            }
+            if (peg.isRenderable()) {
+                visible++;
+            } else {
+                const p = child.position;
+                invisible.push(`${child.name}(${p.x.toFixed(0)},${p.y.toFixed(0)})`);
+            }
+        }
+        console.log(`[诊断] 钉板生成：版型行数 ${layout.length}，应生成 ${total}，实生成 ${spawned}，` +
+            `可渲染 ${visible}，节点位置 (${this.node.position.x.toFixed(0)},${this.node.position.y.toFixed(0)})，` +
+            `缩放 ${this.node.scale.x.toFixed(2)}，父链激活 ${this.node.activeInHierarchy}`);
+        if (spawned < total) {
+            console.error(`[诊断] 钉板不完整：${spawned}/${total}（配合上方逐钉错误定位）`);
+        }
+        if (visible < spawned) {
+            console.error(`[诊断] 隐形钉！仅 ${visible}/${spawned} 可渲染，异常钉：${invisible.slice(0, 5).join(' ')}` +
+                `（本体由 PegComponent.redrawArt 的 Graphics 实心圆盘无条件保证，` +
+                `此处异常说明绘制层未建立或钉板父链未进入渲染树）`);
         }
 
         // 5. ★ 潮汐镀金：持有遗物时，把本张钉板随机 2 颗普通钉镀金为乘倍钉；

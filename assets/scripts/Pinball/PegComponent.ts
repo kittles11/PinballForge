@@ -1,5 +1,5 @@
 import {
-    _decorator, Component, Enum, Color, Graphics, Node, Sprite, Collider2D, UITransform,
+    _decorator, Component, Enum, Color, Graphics, Node, UITransform,
     Vec3, tween, Tween, find,
 } from 'cc';
 import { PegType } from '../Core/DataModels';
@@ -28,7 +28,13 @@ const PEG_TYPE_COLORS: Record<PegType, Color> = {
 
 /**
  * 钉子组件：管理受击次数、力竭状态与回合重置。
- * 依赖：节点需挂 Sprite（变色）与 Collider2D（力竭时禁用）。
+ * ★ 渲染契约（2026-09-05 选项B根修）：钉子本体的可见性**完全由 Graphics 矢量绘制层承担**
+ *   （见 redrawArt 的「⓪ 本体实心圆盘」），不挂、不依赖任何 Sprite / SpriteFrame / 运行时纹理。
+ *   主题色 / 受击高亮 / 力竭灰化一律走 _tint → redrawArt 链路。
+ *   理由：Peg.prefab 曾引用已删除贴图（uuid f12a23c4…），加载后 spriteFrame 为 null → 隐形钉；
+ *   而「运行时补程序化贴图」的自愈方案受纹理上传失败 + 进程级缓存连坐，是复发病根（详见下）。
+ *   物理碰撞体由 prefab 提供，运行时只读不写
+ *   （力竭只停计能，不禁碰撞——避免在物理回调栈内改碰撞体状态触发引擎警告）。
  */
 @ccclass('PegComponent')
 export class PegComponent extends Component {
@@ -39,9 +45,10 @@ export class PegComponent extends Component {
     /** 爆炸半径（px）：默认 BOMB_RADIUS=120；PegBoardManager 铺满屏幕时按实际横向间距注入更大值，保证覆盖一整圈相邻钉 */
     explosionRadius = BOMB_RADIUS;
 
-    /** 每回合最大可受击次数 */
+    /** 每回合最大可受击次数（2026-09-04：3→6——原值过低，炸药钉每次引爆给半径内 ~6 颗各 +1，
+     *  波次后期全场力竭变灰，玩家感知为「钉板变成一颗」；6 次保留力竭防连击设计但不再波内全灭） */
     @property
-    maxHitsPerRound = 3;
+    maxHitsPerRound = 6;
 
     /** 受击激活时的高亮颜色（普通钉浅绿，乘倍钉金黄）；克隆持有，可被 upgradeToMultiplier 安全改写 */
     @property(Color)
@@ -71,32 +78,28 @@ export class PegComponent extends Component {
     /** 爆炸守卫：炸药钉爆炸期间置 true，防止连锁爆炸在同一同步递归栈内重复引爆同一颗钉（栈溢出死循环） */
     private _isExploding = false;
 
-    private _sprite: Sprite | null = null;
-    private _collider: Collider2D | null = null;
-    /** 初始 Sprite 颜色（类型主题色），resetPeg 时恢复 */
+    /** 本体当前填充色（主题色 / 受击高亮 / 力竭灰化），由 redrawArt 的实心圆盘消费 */
+    private _tint: Color = cloneColor(Theme.peg.normal);
+    /** 初始主题色（类型基准色），resetPeg 时恢复 */
     private _defaultColor: Color = cloneColor(Theme.peg.normal);
     /** 初始缩放，作为弹性动画的基准 */
     private _baseScale: Vec3 = new Vec3(1, 1, 1);
     /** 钉子绘制半径（UITransform 半宽，兜底 16） */
     private _radius = 16;
-    /** 类型纹样 + 受击计量环的绘制层（子节点 PegArt，状态变化时整体重绘） */
+    /** 本体实心圆盘 + 类型纹样 + 受击计量环的绘制层（子节点 PegArt，状态变化时整体重绘） */
     private _art: Graphics | null = null;
 
     protected onLoad(): void {
-        this._sprite = this.getComponent(Sprite);
-        this._collider = this.getComponent(Collider2D);
-        // 按类型赋予初始主题色；若枚举未配置才回退到 Sprite 编辑器原始颜色
+        // ★ 选项B根修（2026-09-05）：不再获取/自愈 Sprite。钉子可见性由 redrawArt 的
+        //   Graphics 实心圆盘无条件保证——零贴图、零运行时纹理上传，隐形钉这一类故障从根上消失。
+        // 按类型赋予初始主题色（PEG_TYPE_COLORS 覆盖全部 PegType，无需回退编辑器颜色）
         const typeColor = PEG_TYPE_COLORS[this.pegType];
         if (typeColor) {
             this._defaultColor.set(typeColor);
-        } else if (this._sprite) {
-            this._defaultColor.set(this._sprite.color);
         }
-        if (this._sprite) {
-            this._sprite.color = this._defaultColor;
-        }
+        this._tint.set(this._defaultColor);
         this._baseScale.set(this.node.scale);
-        // 钉子半径（计量环 / 类型纹样的绘制基准）：取 UITransform 半宽，兜底 16
+        // 钉子半径（本体圆盘 / 计量环 / 类型纹样的绘制基准）：取 UITransform 半宽，兜底 16
         const size = this.node.getComponent(UITransform)?.contentSize;
         this._radius = size && size.width > 0 ? size.width / 2 : 16;
         this.redrawArt();
@@ -112,8 +115,8 @@ export class PegComponent extends Component {
      * 被弹珠撞击：
      * - 受击计数 +1；
      * - 播放弹性缩放动画（0.08s 放大到 1.3 倍，0.1s 回弹）；
-     * - Sprite 变高亮色；
-     * - 达到 maxHitsPerRound 后进入力竭（变灰 + 禁用 Collider2D）。
+     * - 本体变高亮色（_tint → Graphics 实心圆盘）；
+     * - 达到 maxHitsPerRound 后进入力竭（变灰；保留碰撞体，弹珠仍可弹跳但不再计能）。
      */
     public onHit(skipAnim: boolean = false, visited: Set<PegComponent> | null = null): void {
         // 严格非空检查：节点已销毁 / 已力竭则不处理
@@ -136,7 +139,8 @@ export class PegComponent extends Component {
 
         // 副球（雷球分裂的左右弹，skipAnim=true）不播放弹性缩放动画：只累加能量/计数，
         // 靠主球统一反馈动画，削减高频碰撞下的 Tween 实例开销。
-        // 类型纹样 / 计量环随受击即时重绘（副球 skipAnim 也计数，同样重绘）
+        // 本体受击高亮 + 类型纹样 / 计量环随受击即时重绘（副球 skipAnim 也计数，同样重绘）
+        this._tint.set(this.hitColor);
         this.redrawArt();
 
         if (!skipAnim) {
@@ -165,10 +169,7 @@ export class PegComponent extends Component {
             PegComponent.resetAllPegs(this);
         }
 
-        // 受击高亮：Sprite 缺失 / 失效时静默跳过，不崩溃
-        if (this._sprite?.isValid) {
-            this._sprite.color = this.hitColor;
-        }
+        // 受击高亮已在计数时随 redrawArt 一并兑现（_tint = hitColor），此处不再二次染色
 
         if (this._currentHitCount >= this.maxHitsPerRound) {
             this.exhaust();
@@ -190,20 +191,16 @@ export class PegComponent extends Component {
         Tween.stopAllByTarget(node);
 
         const big = this._baseScale.clone().multiplyScalar(1.6);
-        if (this._sprite?.isValid) {
-            this._sprite.color = Theme.peg.lavaSplash; // 鲜亮红橙 #FF3300
-        }
+        this._tint.set(Theme.peg.lavaSplash); // 鲜亮红橙 #FF3300
+        this.redrawArt();
         tween(node)
             .to(0.06, { scale: big }, { easing: EASE_PUNCH })
             .to(0.18, { scale: this._baseScale.clone() }, { easing: EASE_POP })
             .call(() => {
                 // 复原颜色：已力竭 → 保持灰色；未力竭 → 保持受击高亮色 hitColor
                 // （修复旧逻辑：lavaHit 动画结束后一律复原为初始白，导致受击高亮被错误清除）
-                if (this._sprite?.isValid) {
-                    this._sprite.color = this._isExhausted
-                        ? this.disabledColor.clone()
-                        : this.hitColor.clone();
-                }
+                this._tint.set(this._isExhausted ? this.disabledColor : this.hitColor);
+                this.redrawArt();
             })
             .start();
     }
@@ -237,15 +234,16 @@ export class PegComponent extends Component {
         this._isExploding = false;
     }
 
-    /** 进入力竭状态：变灰 + 禁用碰撞体 */
+    /** 进入力竭状态：变灰（弹珠仍可弹跳，仅停止计能与受击） */
     private exhaust(): void {
         this._isExhausted = true;
-        if (this._sprite?.isValid) {
-            this._sprite.color = this.disabledColor;
-        }
-        if (this._collider?.isValid) {
-            this._collider.enabled = false;
-        }
+        this._tint.set(this.disabledColor);
+        // ★ 不再禁用 Collider2D（2026-09-04）：本方法由弹珠 onBeginContact 的同步回调链触发，
+        //   物理锁定栈内改碰撞体状态会触发引擎警告「Can not active Rigidbody in contact listener」，
+        //   且炸药钉爆炸会在此栈内连环禁用多颗钉（一次爆炸刷屏 N 条警告）。
+        //   力竭钉保留碰撞体后弹珠仍被弹开、钉板不再「功能性消失」（此前大面积灰钉 + 弹珠穿透，
+        //   玩家感知为「第二波只剩一颗钉子」）；重复计能由 onHit / OrbController.onHitPeg 的
+        //   isExhausted 守卫阻止，物理行为与计能解耦。
         this.redrawArt(); // 计量环全段熄灭
     }
 
@@ -263,17 +261,15 @@ export class PegComponent extends Component {
         }
     }
 
-    /** 新回合重置：清零计数、恢复碰撞器、恢复初始颜色与缩放 */
+    /** 新回合重置：清零计数、恢复初始颜色与缩放（力竭钉本就保留碰撞体，无需再启用） */
     public resetPeg(): void {
         this._currentHitCount = 0;
         this._isExhausted = false;
 
-        if (this._collider) {
-            this._collider.enabled = true;
-        }
-        if (this._sprite) {
-            this._sprite.color = this._defaultColor;
-        }
+        // ★ 不再触碰 Collider2D（2026-09-04）：exhaust 已不移除碰撞体，此处无需恢复；
+        //   且刷新钉被撞时本方法跑在 onBeginContact 同步链内，逐颗 enabled=true 会刷屏
+        //   「Can not active Rigidbody in contact listener」警告（一次刷新 21 条）。
+        this._tint.set(this._defaultColor);
 
         Tween.stopAllByTarget(this.node);
         this.node.setScale(this._baseScale);
@@ -281,26 +277,22 @@ export class PegComponent extends Component {
     }
 
     /**
-     * 动态设置钉子类型：更新 pegType，并同步刷新 _defaultColor 与当前 Sprite 颜色。
+     * 动态设置钉子类型：更新 pegType，并同步刷新 _defaultColor 与当前本体颜色。
      * 供 PegBoardManager 生成钉板时按随机分配的结果统一指定类型（Normal / Bomb / Refresh / Multiplier）。
      * 若钉子正处于力竭状态，改类型后立即恢复可受击，保证新类型能正常参与本局。
      */
     public setPegType(type: PegType): void {
         this.pegType = type;
 
-        // 同步初始基准色：有类型映射色用映射色，否则回退当前 Sprite 颜色
+        // 同步初始基准色：PEG_TYPE_COLORS 覆盖全部类型，未命中则保持当前基准
         const typeColor = PEG_TYPE_COLORS[type];
         if (typeColor) {
             this._defaultColor.set(typeColor);
-        } else if (this._sprite) {
-            this._defaultColor.set(this._sprite.color);
         }
-        if (this._sprite?.isValid) {
-            this._sprite.color = this._defaultColor;
-        }
+        this._tint.set(this._defaultColor);
         this.redrawArt();
 
-        // 力竭中的钉子改类型后立即重置，避免新类型仍处于禁用碰撞的灰化状态
+        // 力竭中的钉子改类型后立即重置计数与颜色，避免新类型仍处于灰化不可计能状态
         if (this._isExhausted) {
             this.resetPeg();
         }
@@ -319,17 +311,32 @@ export class PegComponent extends Component {
         const gold = cloneColor(Theme.peg.multiplier);
         this.hitColor.set(gold);
         this._defaultColor.set(gold);
-        if (this._sprite?.isValid) {
-            this._sprite.color = gold;
-        }
+        this._tint.set(gold);
         this.redrawArt();
-        // 力竭中的钉子强化后立即恢复可受击（重置为金黄并启用碰撞器）
+        // 力竭中的钉子强化后立即恢复可受击（重置为金黄并清零计数）
         if (this._isExhausted) {
             this.resetPeg();
         }
     }
 
-    /** 取（幂等创建）PegArt 绘制层：子节点承载类型纹样与受击计量环 */
+    /**
+     * 本体是否真正可渲染（供 PegBoardManager 生成后做真实校验）。
+     * ★ 存在理由（2026-09-05）：旧诊断只数「实生成 21」，把「节点建出来了却一个都看不见」的
+     *   隐形钉故障掩盖成生成成功，是这个问题反复修不掉的直接原因。本探针把可见性纳入成功判据。
+     */
+    public isRenderable(): boolean {
+        if (!this.node?.isValid || !this.node.activeInHierarchy) {
+            return false;
+        }
+        const ui = this.node.getComponent(UITransform);
+        if (!ui || ui.contentSize.width <= 0) {
+            return false;
+        }
+        // 绘制层必须存在（本体实心圆盘 + 计量环 + 纹样由 redrawArt 无条件写入）
+        return !!this._art?.isValid && this._radius > 0;
+    }
+
+    /** 取（幂等创建）PegArt 绘制层：子节点承载本体实心圆盘、类型纹样与受击计量环 */
     private ensureArt(): Graphics | null {
         if (this._art?.isValid) {
             return this._art;
@@ -350,6 +357,7 @@ export class PegComponent extends Component {
 
     /**
      * 重绘钉子美术层（状态变化时整体重绘，零逐帧开销）：
+     * ⓪ 本体实心圆盘：钉子可见性的**唯一保证**，纯矢量填充，不依赖任何贴图 / 运行时纹理上传；
      * ① 受击计量环：maxHitsPerRound 段弧，随受击逐段熄灭（与音效音高爬升对齐的进度反馈）；
      * ② 类型形状分化：普通=圆（仅计量环）/ 乘倍=六角 / 炸药=引信火花 / 刷新=内环四刻度。
      */
@@ -361,6 +369,11 @@ export class PegComponent extends Component {
         g.clear();
         const c = PEG_TYPE_COLORS[this.pegType] ?? Theme.peg.normal;
         const r = this._radius;
+
+        // ⓪ 本体实心圆盘：半径取 r-1 给外层计量环让位；_tint 承载主题色 / 受击高亮 / 力竭灰化
+        g.fillColor = this._tint;
+        g.circle(0, 0, Math.max(1, r - 1));
+        g.fill();
 
         // ① 受击计量环：段弧从正上方开始顺时针排布，已受击段熄灭
         const segs = Math.max(1, Math.round(this.maxHitsPerRound));

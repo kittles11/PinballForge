@@ -8,7 +8,7 @@
  * 失败兜底：任何一步异常（个别原生平台 uploadData 不兼容等）自动置 useGraphicsFallback=true
  * 并返回 null，调用方退回 Graphics 实心圆绘制。
  */
-import { gfx, Material, SpriteFrame, Texture2D } from 'cc';
+import { SpriteFrame, Texture2D } from 'cc';
 
 /** glow 柔光纹理边长（px） */
 const GLOW_SIZE = 64;
@@ -120,8 +120,14 @@ function makeTexture(w: number, h: number, data: Uint8Array): Texture2D | null {
 }
 
 /**
- * 运行时纹理缓存门面：glow / streak / smoke + 加法混合材质（全部惰性生成、进程级缓存）。
- * 加法混合走单实例 customMaterial（同材质 + 同纹理的 Sprite 可合批，特效层预期新增 draw call ≤2）。
+ * 运行时纹理缓存门面：glow / streak / smoke（全部惰性生成、进程级缓存）。
+ * ★ disc（程序化白圆盘）已于 2026-09-05 移除：钉子 / 球体本体改由 Graphics 矢量实心圆盘绘制，
+ *   不再依赖运行时纹理上传。旧「贴图悬空引用 → 运行时补 disc」自愈方案之所以反复复发，
+ *   根因正在于此——useGraphicsFallback 是全局共享开关、_discSF 是进程级缓存，
+ *   任一纹理上传失败即永久连坐，把 null 原样赋回 spriteFrame 造成全场隐形。
+ * 加法混合不再自建 Material（2026-09-05 根修）：手写 blendState 覆盖挂到普通 Material 上
+ * 会整体替换 BlendTarget、实测渲染成不透明方块——改由各调用点直接设置 Sprite 的
+ * srcBlendFactor/dstBlendFactor（引擎原生路径，_updateBlendFunc 会在材质实例上正确叠加）。
  */
 export class RuntimeTex {
     /** 手动强制回退开关：个别原生平台纹理异常时置 true（生成入口同步联动） */
@@ -131,7 +137,6 @@ export class RuntimeTex {
     private static _streakTex: Texture2D | null | undefined;
     private static _glowSF: SpriteFrame | null | undefined;
     private static _smokeSF: SpriteFrame | null | undefined;
-    private static _additive: Material | null | undefined;
 
     /** glow 纹理（失败返回 null，并自动置 useGraphicsFallback） */
     static glowTexture(): Texture2D | null {
@@ -185,45 +190,4 @@ export class RuntimeTex {
         return this._smokeSF;
     }
 
-    /** 加法混合（SRC_ALPHA → ONE）单实例材质：特效层全部 Sprite 共享，保证可合批 */
-    static additiveMaterial(): Material | null {
-        if (this._additive !== undefined) {
-            return this._additive;
-        }
-        try {
-            const mat = new Material();
-            mat.initialize({
-                effectName: 'builtin-sprite',
-                // CC 3.8：混合走 IMaterialInfo.states（PassOverrides）→ blendState → targets
-                states: {
-                    blendState: {
-                        targets: [{
-                            blend: true,
-                            blendSrc: gfx.BlendFactor.SRC_ALPHA,
-                            blendDst: gfx.BlendFactor.ONE,
-                            blendSrcAlpha: gfx.BlendFactor.SRC_ALPHA,
-                            blendDstAlpha: gfx.BlendFactor.ONE,
-                        }],
-                    },
-                },
-            });
-            // ★ 空 passes 防线（修 "Cannot read properties of undefined (reading 'localSetLayout')"）：
-            //   effectName 初始化走 EffectAsset.get() 查表——effect 未注册/未加载完成时引擎
-            //   静默不报错，材质 passes 保持 []。这种「空材质」一旦挂上 Sprite，batcher-2d
-            //   每帧在 getDescriptorSet 的 batch.passes[0].localSetLayout 处炸掉并刷屏。
-            //   这里显式校验：空材质按「effect 暂未就绪」处理，返回 null 且不缓存（下次调用
-            //   重试，就绪后自动恢复加法混合）；调用方已有回退路径（Graphics / 普通混合），
-            //   绝不让空材质进入渲染管线。
-            if (!mat.passes || mat.passes.length === 0) {
-                console.warn('[RuntimeTex] builtin-sprite effect 未就绪（材质 passes 为空），本次特效退普通混合，稍后自动重试');
-                return null;
-            }
-            this._additive = mat;
-            return mat;
-        } catch (err) {
-            console.warn('[RuntimeTex] 加法混合材质创建失败，特效退普通混合', err);
-            this._additive = null; // 创建即抛异常（非未就绪）：永久缓存 null 不再重试
-            return null;
-        }
-    }
 }

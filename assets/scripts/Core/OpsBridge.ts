@@ -7,6 +7,8 @@ import { MetaManager } from './MetaManager';
 import { LevelManager } from './LevelManager';
 import { GoldManager } from './GoldManager';
 import { CastleController } from '../Battle/CastleController';
+import { DynamicDifficulty } from './DynamicDifficulty';
+import { DailyChallenge } from './DailyChallenge';
 
 const { ccclass } = _decorator;
 
@@ -115,11 +117,15 @@ export class OpsBridge extends Component {
     private onGameVictory(): void {
         DailyTaskManager.reportProgress('clear_waves');
         this.trackWaveClear();
+        // 🎯 每日挑战：目标关首胜领奖（非目标关内部自判返回 0）
+        DailyChallenge.onRunWin(LevelManager.currentChapter, LevelManager.currentLevel);
         this.finishRun(true);
     }
 
     /** run_fail / run_win + run_end；run_end 延迟一帧，确保 ResultDialog 同步链内 grantRunReward 已入账 */
     private finishRun(win: boolean): void {
+        // 🎚 动态难度：失败累加缓冲、胜利归零（LevelManager.getWaveConfig 消费修正系数）
+        DynamicDifficulty.reportRun(win);
         const chapter = LevelManager.currentChapter;
         const level = LevelManager.currentLevel;
         const runDurationSec = Math.round((Date.now() - this._runStartTs) / 1000);

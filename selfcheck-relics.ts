@@ -62,15 +62,17 @@ check('RELIC_ACQUIRED 监听/注销成对（onLoad on ↔ onDestroy off，无泄
     /EventBus\.on\(GameEvents\.RELIC_ACQUIRED, this\.onRelicAcquired, this\)/.test(bar)
     && /EventBus\.off\(GameEvents\.RELIC_ACQUIRED, this\.onRelicAcquired, this\)/.test(bar));
 check('获得反馈：新瓷片弹入（0.2→1.25→1）+ 跳字「获得」，消费后清标记',
-    /_pendingHighlight = null;[\s\S]*?setScale\(0\.2, 0\.2, 1\)[\s\S]*?Vec3\(1\.25, 1\.25, 1\)[\s\S]*?🧿 获得/.test(bar));
+    /_pendingHighlight = null;[\s\S]*?setScale\(0\.2, 0\.2, 1\)[\s\S]*?Vec3\(1\.25, 1\.25, 1\)[\s\S]*?获得遗物/.test(bar));
 check('rebuild 尾部消费高亮标记（时序：ACQUIRED 置位 → CHANGED 重建 → 高亮）',
     /this\.highlightNewlyAcquired\(\);\s*\}/.test(bar));
-check('点击瓷片复习被动全文（TOUCH_END → showText(desc)，命中区显式 150×40）',
+check('点击瓷片复习被动全文（TOUCH_END → showText(name：desc)，命中区显式 118×34）',
     /tile\.on\(Node\.EventType\.TOUCH_END/.test(bar)
-    && /showText\(\s*`\$\{info\.icon\} \$\{info\.desc\}`/.test(bar)
+    && /showText\(\s*`\$\{info\.name\}：\$\{info\.desc\}`/.test(bar)
     && /tf\.setContentSize\(TILE_WIDTH, TILE_HEIGHT\)/.test(bar));
+check('瓷片图标走 IconLib 矢量染色（mountIcon，icon 字段为注册表名而非 emoji）',
+    /mountIcon\(tile, info\.icon, 22, TILE_BORDER/.test(bar));
 check('占位文案展示上限规则 0/5（数据驱动非硬编码）',
-    /🧿 遗物 0\/\$\{ALL_RELIC_TYPES\.length\}/.test(bar));
+    /遗物 0\/\$\{ALL_RELIC_TYPES\.length\}/.test(bar));
 check('占位态清高亮标记（防御：空池无瓷片可弹，标记不得穿透到下次重建）',
     /if \(types\.length === 0\) \{\s*this\.addPlaceholder\(\);\s*this\._pendingHighlight = null;/.test(bar));
 

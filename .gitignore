@@ -34,3 +34,5 @@ node_modules/
 *.orig
 *.rej
 *.zip
+# raw art source images (large, local only)
+raw-art-src/

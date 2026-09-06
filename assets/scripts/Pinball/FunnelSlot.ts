@@ -4,10 +4,19 @@ import {
 } from 'cc';
 import { OrbController } from './OrbController';
 import { FunnelType } from '../Core/DataModels';
-import { cloneColor, EASE_PUNCH, funnelColor } from '../Core/ArtTheme';
+import { cloneColor, EASE_PUNCH, funnelColor, Theme } from '../Core/ArtTheme';
 import { FxManager } from '../Core/FxManager';
+import { recessedSlot } from '../Core/UiKit';
 
 const { ccclass, property } = _decorator;
+
+/** 槽口可容纳宽度（凹陷槽与光晕的基准尺寸；漏斗场景布置宽约 88px，取整留边） */
+const SLOT_MOUTH_W = 76;
+const SLOT_MOUTH_H = 30;
+/** 呼吸光晕基准透明度 / 振幅 / 周期（秒）：低调呼吸，不与受击震屏抢注意力 */
+const HALO_BASE = 150;
+const HALO_AMPLITUDE = 70;
+const HALO_PERIOD = 2.2;
 
 export { FunnelType };
 
@@ -26,6 +35,10 @@ export class FunnelSlot extends Component {
 
     /** 监听中的碰撞体，onDestroy 时用于注销 */
     private _collider: Collider2D | null = null;
+    /** 呼吸光晕透明度组件（ensureHaloPulse 创建，update 驱动脉动） */
+    private _haloOpacity: UIOpacity | null = null;
+    /** 光晕脉动时钟（秒，周期内取模） */
+    private _haloClock = 0;
 
     protected start(): void {
         this._collider = this.getComponent(Collider2D);
@@ -34,6 +47,8 @@ export class FunnelSlot extends Component {
         }
         this.ensureTypeLabel();
         this.ensureNeonPillar();
+        this.ensureRecess();
+        this.ensureHaloPulse();
     }
 
     protected onDestroy(): void {
@@ -160,5 +175,59 @@ export class FunnelSlot extends Component {
             g.fill();
         }
         node.addChild(pillar);
+    }
+
+    /**
+     * 凹陷槽口（可供性，GAME_PLAN 4.3）：亮环 + 暗陷 + 底部反光，用「往里凹」的光照语言
+     * 暗示「可投入」；与吞球压缩动画（playSwallowFeedback）形成看与按的闭环。幂等。
+     */
+    private ensureRecess(): void {
+        const node = this.node;
+        if (!node?.isValid || node.getChildByName('Recess')) {
+            return;
+        }
+        const recess = new Node('Recess');
+        recess.layer = node.layer;
+        recess.addComponent(UITransform).setContentSize(SLOT_MOUTH_W + 8, SLOT_MOUTH_H + 8);
+        const g = recess.addComponent(Graphics);
+        recessedSlot(g, 0, 0, SLOT_MOUTH_W, SLOT_MOUTH_H, FunnelSlot.themeColor(this.funnelType), Theme.ui.panelOpaque, 12);
+        node.addChild(recess);
+    }
+
+    /** 槽口呼吸光晕：UIOpacity 正弦脉动（update 驱动，无 tween 泄漏），吸引视线到「三选一」目标（幂等） */
+    private ensureHaloPulse(): void {
+        const node = this.node;
+        if (!node?.isValid || node.getChildByName('Halo')) {
+            return;
+        }
+        const c = FunnelSlot.themeColor(this.funnelType);
+        const halo = new Node('Halo');
+        halo.layer = node.layer;
+        halo.addComponent(UITransform);
+        const g = halo.addComponent(Graphics);
+        // 三层同心圆软光晕（大而淡 → 小而亮），中心与槽口重合
+        const layers: Array<[number, number]> = [[58, 26], [40, 44], [24, 66]];
+        for (const [r, alpha] of layers) {
+            const col = cloneColor(c);
+            col.a = alpha;
+            g.fillColor = col;
+            g.circle(0, 0, r);
+            g.fill();
+        }
+        const op = halo.addComponent(UIOpacity);
+        op.opacity = HALO_BASE;
+        node.addChild(halo);
+        // 光晕垫在槽口视觉之下（凹陷槽口仍清晰可读）
+        halo.setSiblingIndex(0);
+        this._haloOpacity = op;
+    }
+
+    protected update(dt: number): void {
+        if (!this._haloOpacity?.isValid) {
+            return;
+        }
+        this._haloClock = (this._haloClock + dt) % HALO_PERIOD;
+        const phase = Math.sin((this._haloClock / HALO_PERIOD) * Math.PI * 2);
+        this._haloOpacity.opacity = HALO_BASE + Math.round(phase * HALO_AMPLITUDE);
     }
 }

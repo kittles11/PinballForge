@@ -5,12 +5,13 @@ import { EventBus, GameEvents } from '../Core/EventBus';
 import { RelicType, RELIC_DATABASE, ALL_RELIC_TYPES } from '../Core/DataModels';
 import { FloatingTextManager } from '../Core/FloatingTextManager';
 import { Theme } from '../Core/ArtTheme';
+import { mountIcon } from '../Core/IconLib';
 
 const { ccclass } = _decorator;
 
-/** 单个遗物瓷片尺寸（px） */
-const TILE_WIDTH = 150;
-const TILE_HEIGHT = 40;
+/** 单个遗物瓷片尺寸（px）：收窄到 118×34，5 枚横排 622px 不超屏、不遮顶部 HUD 行 */
+const TILE_WIDTH = 118;
+const TILE_HEIGHT = 34;
 /** 瓷片间距（px） */
 const TILE_GAP = 8;
 /** 瓷片底色：半透明暗金（与金币主题呼应） */
@@ -20,7 +21,7 @@ const TILE_BORDER = Theme.ui.gold;
 
 /**
  * 顶部 UI 遗物栏（RelicBarController）：挂在 Canvas/UILayer/RelicBar 节点（由 RelicManager 自举创建）。
- * - 监听 RELIC_CHANGED 实时渲染已获得的遗物 Emoji 徽章列表，一字横排居中；
+ * - 监听 RELIC_CHANGED 实时渲染已获得的遗物矢量图标徽章列表（IconLib 染色），一字横排居中；
  * - 初始渲染同样由 RELIC_CHANGED 驱动（RelicManager.ensureMounted 挂载后广播一次当前集合），
  *   本类不再 import RelicManager，与其保持单向依赖（管理器 → 视图），杜绝循环引用。
  *
@@ -45,6 +46,8 @@ export class RelicBarController extends Component {
             this.destroy();
             return;
         }
+        // 顶部 HUD 两行式布局：遗物栏钉在 HUD 第二行下方（y=514），不再与能量/波次行挤叠
+        this.node.setPosition(0, 514, 0);
         EventBus.on(GameEvents.RELIC_CHANGED, this.onRelicChanged, this);
         EventBus.on(GameEvents.RELIC_ACQUIRED, this.onRelicAcquired, this);
     }
@@ -111,14 +114,14 @@ export class RelicBarController extends Component {
             return;
         }
         for (const child of this.node.children) {
-            if (child.name === `${info.icon}${info.name}`) {
+            if (child.name === `relic_${type}`) {
                 child.setScale(0.2, 0.2, 1);
                 tween(child)
                     .to(0.12, { scale: new Vec3(1.25, 1.25, 1) })
                     .to(0.08, { scale: new Vec3(1, 1, 1) })
                     .start();
                 FloatingTextManager.instance?.showText(
-                    `🧿 获得 ${info.icon} ${info.name}`, child.worldPosition, Theme.ui.gold, true,
+                    `获得遗物 ${info.name}`, child.worldPosition, Theme.ui.gold, true,
                 );
                 return;
             }
@@ -127,16 +130,16 @@ export class RelicBarController extends Component {
 
     /** 未获得遗物时的占位提示（展示上限规则：0/5） */
     private addPlaceholder(): void {
-        const label = this.makeLabel(`🧿 遗物 0/${ALL_RELIC_TYPES.length}`);
+        const label = this.makeLabel(`遗物 0/${ALL_RELIC_TYPES.length}（藏宝箱获取）`);
         label.color = Theme.ui.whiteGhost;
-        label.fontSize = 20;
+        label.fontSize = 17;
         this.node.addChild(label.node);
     }
 
-    /** 创建单个遗物瓷片：半透明暗金圆角底板（亮金描边）+ 图标 + 名称；点击复习被动全文 */
+    /** 创建单个遗物瓷片：半透明暗金圆角底板（亮金描边）+ 矢量图标 + 名称；点击复习被动全文 */
     private createTile(type: RelicType): Node {
         const info = RELIC_DATABASE[type];
-        const tile = new Node(`${info.icon}${info.name}`);
+        const tile = new Node(`relic_${type}`);
         tile.layer = this.node.layer;
         const tf = tile.getComponent(UITransform) ?? tile.addComponent(UITransform);
         // 显式尺寸：触摸命中区与视觉底板一致（默认 100×100 会超出瓷片误触）
@@ -151,15 +154,18 @@ export class RelicBarController extends Component {
         g.roundRect(-TILE_WIDTH / 2, -TILE_HEIGHT / 2, TILE_WIDTH, TILE_HEIGHT, 10);
         g.stroke();
 
-        const label = this.makeLabel(`${info.icon} ${info.name}`);
-        label.fontSize = 20;
-        label.color = Color.WHITE;
+        // 矢量图标（主题金染色）+ 纯文本名称（替代原 emoji Label：字形跨平台一致）
+        mountIcon(tile, info.icon, 22, TILE_BORDER, -TILE_WIDTH / 2 + 20, 0);
+        const label = this.makeLabel(info.name);
+        label.fontSize = 17;
+        label.color = Theme.white;
+        label.node.setPosition(12, 0, 0);
         tile.addChild(label.node);
 
         // 点击瓷片：跳字展示被动效果描述（tile 随 rebuild 销毁，监听随节点自然回收）
         tile.on(Node.EventType.TOUCH_END, () => {
             FloatingTextManager.instance?.showText(
-                `${info.icon} ${info.desc}`, tile.worldPosition, Theme.ui.gold,
+                `${info.name}：${info.desc}`, tile.worldPosition, Theme.ui.gold,
             );
         }, this);
         return tile;

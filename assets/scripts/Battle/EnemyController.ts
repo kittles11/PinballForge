@@ -7,7 +7,7 @@ import {
     EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, OrbType, RelicType,
     FunnelType, BossBehavior, BOSS_BEHAVIOR_STATS,
     bossBehaviorForChapter, bulwarkIntervalForChapter, summonHpRatioForChapter,
-    EnemyAffix, AFFIX_STATS,
+    EnemyAffix, AFFIX_STATS, affixScaleForChapter, AFFIX_HASTE_GROWTH,
 } from '../Core/DataModels';
 import { RelicManager, THORN_REFLECT_DAMAGE } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
@@ -15,6 +15,8 @@ import { GoldManager } from '../Core/GoldManager';
 import { FloatingTextManager } from '../Core/FloatingTextManager';
 import { cloneColor, rgb, Theme } from '../Core/ArtTheme';
 import { FxManager } from '../Core/FxManager';
+import { mountIcon } from '../Core/IconLib';
+import { loadTex } from '../Core/TexCache';
 
 const { ccclass, property } = _decorator;
 
@@ -113,8 +115,14 @@ export class EnemyController extends Component {
     /** 死亡掉金币（Boss 诏令亲卫由 WaveManager 置位；0=不掉） */
     public goldOnDeath = 0;
 
-    /** 🎖️ 精英词缀（WaveManager 出精英波时掷取并 applyAffix；Boss 与普通怪恒为 null） */
+    /** 🎖️ 精英词缀主标记（首个词缀，兼容猎首判定等既有消费点；Boss 与普通怪恒为 null） */
     public affix: EnemyAffix | null = null;
+    /** 🎖️ 本精英携带的全部词缀（难度方案B：第 10 章起 2 条 / 第 25 章起 3 条，去重） */
+    public affixes: EnemyAffix[] = [];
+    /** 🩸 血怒实际回复比例（按章节成长后存档于施加时；未携带血怒为 0，vitalRegen 回退基础表） */
+    private _affixRegenRatio = 0;
+    /** 👑 随从召唤血量比例（按章节成长并封顶 0.4；未携带随从为 0） */
+    private _affixSummonHpRatio = 0;
 
     /**
      * 同屏存活敌人计数（含 0.36s 死亡动画中的尸体，偏保守）：君王诏令的同屏护栏用。
@@ -210,18 +218,33 @@ export class EnemyController extends Component {
     }
 
     /**
-     * 🎖️ 施加精英词缀（WaveManager 在节点激活前调用，与 setupType 同时序）。
-     * 铁壁与铁甲怪天生护盾可叠加（2+2=4 层合法，onLoad 的 createShieldPips 读到叠加后层数）；
-     * 疾风在 WaveManager 已设定的 moveSpeed 上再乘；血怒/随从为标记行为，start/die 分别消费。
+     * 🎖️ 施加精英词缀（WaveManager 在节点激活前调用，与 setupType 同时序；可多次调用携带多条去重词缀）。
+     * 铁壁与铁甲怪天生护盾可叠加（走既有格挡与弧视觉）；疾风在 WaveManager 已设定的 moveSpeed 上再乘；
+     * 血怒/随从为标记行为，start/die 分别消费。
+     * 数值随章节成长（难度方案B）：盾层/血怒回复/随从血量乘 affixScaleForChapter，疾风按 AFFIX_HASTE_GROWTH 限幅成长；
+     * 同词缀重复施加幂等跳过（不重复叠盾、不叠乘 moveSpeed）。
      */
-    public applyAffix(affix: EnemyAffix): void {
-        this.affix = affix;
+    public applyAffix(affix: EnemyAffix, chapter: number = LevelManager.currentChapter): void {
+        if (this.affixes.includes(affix)) {
+            return;
+        }
+        if (this.affixes.length === 0) {
+            this.affix = affix;
+        }
+        this.affixes.push(affix);
         const s = AFFIX_STATS[affix];
+        const scale = affixScaleForChapter(chapter);
         if (s.shieldCharges) {
-            this.shieldCharges += s.shieldCharges;
+            this.shieldCharges += Math.round(s.shieldCharges * scale);
         }
         if (s.speedMult) {
-            this.moveSpeed = Math.round(this.moveSpeed * s.speedMult);
+            this.moveSpeed = Math.round(this.moveSpeed * (s.speedMult + AFFIX_HASTE_GROWTH * (scale - 1)));
+        }
+        if (affix === EnemyAffix.Vital) {
+            this._affixRegenRatio = (s.regenRatio ?? 0) * scale;
+        }
+        if (affix === EnemyAffix.Retinue) {
+            this._affixSummonHpRatio = Math.min(0.4, (s.summonHpRatio ?? 0) * scale);
         }
     }
 
@@ -246,6 +269,8 @@ export class EnemyController extends Component {
         this.createShieldPips();
         // ★ 美术叠层：落地投影 + 轮廓描边 + 类型剪影（幂等，纯代码零资源）
         this.ensureEnemyArt();
+        // ★ 生成贴图优先（textures/enemy_<type>）：加载成功则替换色块/剪影，失败保持矢量兜底
+        this.ensureEnemyTexture();
         // 👹 章节大 Boss：启动周期狂暴回复（冰封不影响回复 → 需爆发伤害压制，不能磨死它）
         if (this.enemyType === EnemyType.Boss && !this.isMini) {
             this.schedule(this.bossRegen, BOSS_REGEN_INTERVAL);
@@ -263,17 +288,18 @@ export class EnemyController extends Component {
             }
         }
 
-        // 🎖️ 精英词缀：常驻徽章 + 出生跳字宣告；血怒挂半强度回复定时器
-        if (this.affix !== null) {
+        // 🎖️ 精英词缀：常驻徽章 + 出生跳字宣告（多词缀逐个列出，难度方案B）；血怒挂回复定时器
+        if (this.affixes.length > 0) {
             this.ensureAffixBadge();
-            const s = AFFIX_STATS[this.affix];
+            const names = this.affixes.map((a) => AFFIX_STATS[a].name).join('·');
             FloatingTextManager.instance?.showText(
-                `🎖️ ${s.icon} ${s.name}！`,
+                `精英来袭：${names}！`,
                 new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y + 20, 0),
                 Theme.ui.gold, true,
             );
-            if (this.affix === EnemyAffix.Vital && s.regenInterval) {
-                this.schedule(this.vitalRegen, s.regenInterval);
+            const vital = AFFIX_STATS[EnemyAffix.Vital];
+            if (this.affixes.includes(EnemyAffix.Vital) && vital.regenInterval) {
+                this.schedule(this.vitalRegen, vital.regenInterval);
             }
         }
 
@@ -386,7 +412,7 @@ export class EnemyController extends Component {
 
     /** 受击入口：伤害已由发射端乘好漏斗倍率，此处按【珠子类型】结算受击特效；血量归零则死亡。
      *  @param orbType 珠子类型（决定受击特效：霜冻冻结 / 雷电光闪 / 熔岩红光暴击 / 普通白闪）
-     *  @param rawFloor true 时跳过「最低 50」保底（供荆棘反射这类固定小伤害使用，如实扣除）；默认 false 维持 50 保底。
+     *  @param rawFloor true 时跳过伤害保底（供荆棘反射这类固定小伤害使用，如实扣除）；默认 false 维持保底（教学期 50 / 第 4 章起 25，难度方案A）。
      *  @param funnelType 入槽漏斗类型（TurretController 透传）：Boss「破阵坚盾」剥盾判定用；荆棘等直伤传 null。 */
     public takeDamage(amount: number, orbType: OrbType, rawFloor = false, funnelType: FunnelType | null = null): void {
         if (this._dead || !this.node?.isValid) {
@@ -402,7 +428,7 @@ export class EnemyController extends Component {
             this.redrawShieldPips(Math.max(0, this.shieldCharges));
             this.flashHit(SHIELD_BLOCK_COLOR);
             FloatingTextManager.instance?.showText(
-                '🛡️ 格挡',
+                '格挡',
                 new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
                 SHIELD_TEXT_COLOR,
             );
@@ -410,9 +436,10 @@ export class EnemyController extends Component {
             return;
         }
 
-        // 保底伤害：每次受击至少扣除 50 点，确保 1~2 颗弹珠即可打爆红怪（荆棘反射等固定伤害可跳过）
+        // 保底伤害：每次受击至少扣除保底值（难度方案A：第 1~3 章教学期 50，第 4 章起 25），
+        // 确保弹珠空过钉板也有基本产出（荆棘反射等固定伤害可跳过）。
         // 漏斗倍率（聚能 ×2 / 精炼 ×1.5）已在 OrbController 入槽结算时乘入，此处不再感知漏斗。
-        const baseDmg = rawFloor ? Math.max(amount, 0) : Math.max(amount, 50);
+        const baseDmg = rawFloor ? Math.max(amount, 0) : Math.max(amount, LevelManager.getDamageFloor());
         let dmg = baseDmg;
         // 👹 A 破阵坚盾：盾期炮弹伤害 ×0.5（软减伤非免疫）；重炮（红槽）弹剥 1 层、熔岩弹剥 2 层——
         //   漏斗选择与熔岩构筑在这里获得真实应答。荆棘等直伤（rawFloor）不吃盾也不剥盾。
@@ -436,20 +463,20 @@ export class EnemyController extends Component {
             if (peeled > 0) {
                 this._bulwarkLayers = Math.max(0, this._bulwarkLayers - peeled);
                 if (this._bulwarkLayers === 0) {
-                    FloatingTextManager.instance?.showText('🛡️ 盾碎了！', pos, Theme.ui.gold, true);
+                    FloatingTextManager.instance?.showText('盾碎了！', pos, Theme.ui.gold, true);
                 } else {
                     FloatingTextManager.instance?.showText(`🛡️ 剥盾 -${peeled}`, pos, SHIELD_TEXT_COLOR);
                 }
                 this.redrawShieldPips(this._bulwarkLayers);
             } else {
-                FloatingTextManager.instance?.showText('🛡️ ×0.5', pos, SHIELD_TEXT_COLOR);
+                FloatingTextManager.instance?.showText('护盾 ×0.5', pos, SHIELD_TEXT_COLOR);
             }
         }
         // 👹 C 破绽时刻：窗口内受到伤害 ×2（攒手时机检查，纯正反馈；窗口外零惩罚）
         if (this._exposed && !rawFloor) {
             dmg *= BOSS_BEHAVIOR_STATS.exposeDamageMult;
             FloatingTextManager.instance?.showText(
-                '💢 破绽！',
+                '破绽！',
                 new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y + 26, 0),
                 HEAVY_HIT_TEXT_COLOR, true,
             );
@@ -510,7 +537,7 @@ export class EnemyController extends Component {
                 break;
             default:
                 // 普通 / 金币弹：标准白闪（金币已改为入槽即发，见 OrbController.triggerFunnelAndDestroy，此处不再发放防重复）
-                this.flashHit(Color.WHITE);
+                this.flashHit(Theme.white);
                 break;
         }
 
@@ -585,7 +612,7 @@ export class EnemyController extends Component {
             .to(BOSS_BEHAVIOR_STATS.summonCast / 2, { scale: this._baseScale.clone() })
             .start();
         FloatingTextManager.instance?.showText(
-            '👑 诏令！',
+            '诏令！',
             new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
             Theme.ui.gold, true,
         );
@@ -625,7 +652,7 @@ export class EnemyController extends Component {
             .to(BOSS_BEHAVIOR_STATS.bulwarkCast / 2, { scale: this._baseScale.clone() })
             .start();
         FloatingTextManager.instance?.showText(
-            '🛡️ 坚盾！',
+            '坚盾！',
             new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
             SHIELD_TEXT_COLOR, true,
         );
@@ -643,7 +670,7 @@ export class EnemyController extends Component {
                     this.redrawShieldPips(0);
                     if (this.node?.isValid && !this._dead) {
                         FloatingTextManager.instance?.showText(
-                            '🛡️ 盾已碎裂',
+                            '盾已碎裂',
                             new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
                             Theme.ui.whiteGhost,
                         );
@@ -661,7 +688,7 @@ export class EnemyController extends Component {
         if (this._dead || !this.node?.isValid) {
             return;
         }
-        this.flashHit(Color.WHITE);
+        this.flashHit(Theme.white);
         this.scheduleOnce(() => {
             if (this._dead || !this.node?.isValid) {
                 return;
@@ -675,7 +702,7 @@ export class EnemyController extends Component {
             this._exposed = true;
             this.node.setScale(this._baseScale.clone().multiplyScalar(1.12));
             FloatingTextManager.instance?.showText(
-                '💢 破绽！×2',
+                '破绽！×2',
                 new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y, 0),
                 HEAVY_HIT_TEXT_COLOR, true,
             );
@@ -688,12 +715,12 @@ export class EnemyController extends Component {
         }, BOSS_BEHAVIOR_STATS.exposeTelegraph);
     }
 
-    /** 🎖️ 血怒回复：每 5s 回 2% 最大生命（Boss 狂暴回复的半强度同款模型，冰封不挡回复） */
+    /** 🎖️ 血怒回复：每 5s 回复最大生命（比例按章节成长存档于施加时，难度方案B；冰封不挡回复） */
     private vitalRegen(): void {
         if (this._dead || !this.node?.isValid || this.currentHp <= 0 || this.currentHp >= this.maxHp) {
             return;
         }
-        const ratio = AFFIX_STATS[EnemyAffix.Vital].regenRatio;
+        const ratio = this._affixRegenRatio > 0 ? this._affixRegenRatio : AFFIX_STATS[EnemyAffix.Vital].regenRatio;
         const heal = Math.min(this.maxHp - this.currentHp, Math.round(this.maxHp * ratio));
         this.currentHp += heal;
         this.updateHpBar();
@@ -704,19 +731,20 @@ export class EnemyController extends Component {
         );
     }
 
-    /** 🎖️ 词缀徽章：血条上方常驻小图标（持续可读信号；节点随敌人销毁自然回收） */
+    /** 🎖️ 词缀徽章：血条上方常驻矢量图标（多词缀横排，IconLib 染色；节点随敌人销毁自然回收） */
     private ensureAffixBadge(): void {
-        if (!this.affix || !this.node?.isValid || this.node.getChildByName('AffixBadge')) {
+        if (this.affixes.length === 0 || !this.node?.isValid || this.node.getChildByName('AffixBadge')) {
             return;
         }
         const n = new Node('AffixBadge');
         n.layer = this.node.layer;
-        n.addComponent(UITransform).setContentSize(40, 24);
-        const label = n.addComponent(Label);
-        label.string = AFFIX_STATS[this.affix].icon;
-        label.fontSize = 20;
-        label.horizontalAlign = Label.HorizontalAlign.CENTER;
-        label.verticalAlign = Label.VerticalAlign.CENTER;
+        n.addComponent(UITransform).setContentSize(this.affixes.length > 1 ? 64 : 40, 24);
+        // 矢量图标逐枚横排（替代 emoji Label：跨平台字形一致 + 主题色可染）
+        const step = 22;
+        const startX = -((this.affixes.length - 1) * step) / 2;
+        this.affixes.forEach((a, i) => {
+            mountIcon(n, AFFIX_STATS[a].icon, 20, Theme.white, startX + i * step, 0);
+        });
         n.setPosition(0, HP_BAR_OFFSET_Y + 24, 0);
         this.node.addChild(n);
     }
@@ -867,6 +895,38 @@ export class EnemyController extends Component {
     }
 
     /**
+     * 生成贴图优先（textures/enemy_<type>，幂等）：加载成功 → 挂 Sprite 展示立绘、
+     * 清掉节点上的兜底色块圆与类型剪影层（落地投影保留——伪景深与立绘不冲突）；
+     * 加载失败 → 静默返回，保持纯代码矢量路径不受影响。
+     * 贴图为按球种独立绘制的立绘，故不再按类型染色（受击/冰封 tint 仍走 Sprite.color 正常生效）。
+     */
+    private ensureEnemyTexture(): void {
+        const node = this.node;
+        if (!node?.isValid) {
+            return;
+        }
+        const name = String(this.enemyType).toLowerCase(); // EnemyType 字符串枚举：Normal→enemy_normal
+        loadTex(`enemy_${name}`, (sf) => {
+            if (!sf || !node?.isValid) {
+                return; // 失败：矢量兜底（色块圆 + 剪影）保持原样
+            }
+            // 清兜底：节点上的色块圆 + 类型剪影层（落地投影 EnemyShadow 保留）
+            const g = node.getComponent(Graphics);
+            g?.clear();
+            node.getChildByName('EnemyArt')?.destroy();
+            // 立绘 Sprite：等比缩放到色块圆直径的 1.25 倍（立绘含留白边距，稍放大对齐碰撞观感）
+            const sp = node.getComponent(Sprite) ?? node.addComponent(Sprite);
+            sp.sizeMode = Sprite.SizeMode.CUSTOM;
+            sp.trim = false;
+            sp.spriteFrame = sf;
+            sp.color = Theme.white;
+            const w = ENEMY_BODY_RADIUS * 2.5;
+            const xt = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+            xt.setContentSize(w, w * (sf.height / sf.width));
+        });
+    }
+
+    /**
      * 敌人美术叠层（幂等，纯代码零资源）：
      * ① 落地投影：压扁暗椭圆（子节点 y 压缩实现），伪景深让敌人「立」在场地上；
      * ② 深色轮廓描边 + 类型剪影：铁甲=胸前盾弧 / 突袭=左向尖角 / 史莱姆=顶部气泡 / Boss=冠刺。
@@ -964,14 +1024,16 @@ export class EnemyController extends Component {
                 speed: this.moveSpeed,
             });
         }
-        // 🎖️ 随从词缀：精英死亡召唤 2 只亲卫（复用诏令 summon 管线；不掉金币——亲卫本身就是漏防惩罚）
-        if (this.affix === EnemyAffix.Retinue && !this.isMini && this.node?.isValid) {
+        // 🎖️ 随从词缀：精英死亡召唤 2 只亲卫（复用诏令 summon 管线；不掉金币——亲卫本身就是漏防惩罚）；
+        //   召唤血量按章节成长（难度方案B，施加时存档于 _affixSummonHpRatio）
+        if (this.affixes.includes(EnemyAffix.Retinue) && !this.isMini && this.node?.isValid) {
             const s = AFFIX_STATS[EnemyAffix.Retinue];
+            const ratio = this._affixSummonHpRatio > 0 ? this._affixSummonHpRatio : (s.summonHpRatio ?? 0);
             EventBus.emit(GameEvents.ENEMY_SPLIT, {
                 x: this.node.position.x - 30,
                 y: this.node.position.y,
                 count: s.summonCount,
-                hp: Math.max(1, Math.round(this.maxHp * s.summonHpRatio)),
+                hp: Math.max(1, Math.round(this.maxHp * ratio)),
                 speed: this.moveSpeed,
                 summon: true,
                 goldDrop: 0,

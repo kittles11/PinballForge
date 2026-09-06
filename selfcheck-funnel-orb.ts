@@ -76,7 +76,7 @@ check('受击特效 switch(orbType)：霜冻冻结/雷电光闪/熔岩红光/普
     && /case OrbType\.Frost:\s*[\s\S]*?this\.isFrozen = true;/.test(enemy)
     && /case OrbType\.Lightning:\s*[\s\S]*?this\.flashHit\(LIGHTNING_HIT_COLOR\)/.test(enemy)
     && /case OrbType\.Lava:\s*[\s\S]*?this\.flashHit\(HEAVY_HIT_COLOR\)/.test(enemy)
-    && /default:\s*[\s\S]*?this\.flashHit\(Color\.WHITE\)/.test(enemy));
+    && /default:\s*[\s\S]*?this\.flashHit\(Theme\.white\)/.test(enemy));
 check('敌方不按漏斗重算伤害：重炮×2 分支已移除；FunnelType 仅出现在剥盾判定一处',
     !/baseDmg \* 2 \* EnemyController\.heavyOverloadMult/.test(enemy)
     && !/FUNNEL_FOCUS_MULT|FUNNEL_REFINE_MULT/.test(enemy)

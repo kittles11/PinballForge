@@ -6,6 +6,7 @@
  * 词缀系统全部复用既有机制（铁壁=铁甲格挡弧 / 疾风=moveSpeed / 血怒=回复定时器 /
  * 随从=诏令 ENEMY_SPLIT 管线），本自检三层覆盖：
  *   ① 数据层真跑：解锁池、掷骰边界（注入 rand 确定性）、字段完整
+ *   ①b 难度方案B 真跑：词缀数量/强度随章成长、多词缀去重掷取
  *   ② 波次配置真跑：isElite/isBoss 互斥矩阵（Boss 波永不叠词缀）
  *   ③ 接线断言：applyAffix 数值应用、血怒/随从消费点、徽章可读性、宣告跳字
  */
@@ -21,6 +22,7 @@ const store = new Map<string, string>();
 };
 const {
     EnemyAffix, AFFIX_STATS, AFFIX_UNLOCK_CHAPTER, affixPoolForChapter, rollEliteAffix,
+    rollEliteAffixes, affixCountForChapter, affixScaleForChapter,
 } = await import('./assets/scripts/Core/DataModels.ts');
 const { LevelManager } = await import('./assets/scripts/Core/LevelManager.ts');
 
@@ -65,6 +67,29 @@ check('词缀表字段完整（icon/name + 各自数值项）',
 check('血怒强度 < Boss 狂暴回复（0.4%/s vs 0.83%/s，精英不抢 Boss 生态位）',
     AFFIX_STATS[EnemyAffix.Vital].regenRatio / AFFIX_STATS[EnemyAffix.Vital].regenInterval < 0.05 / 6);
 
+// ── ①b 难度方案B：词缀数量/强度随章成长真跑 ──
+check('词缀数量曲线：第 9 章 1 条 / 第 10 章起 2 条 / 第 25 章起 3 条',
+    affixCountForChapter(9) === 1 && affixCountForChapter(10) === 2
+    && affixCountForChapter(24) === 2 && affixCountForChapter(25) === 3
+    && affixCountForChapter(50) === 3);
+check('词缀强度曲线：×1 起步线性成长、第 51 章 ×2 封顶（浮点容差断言）',
+    affixScaleForChapter(1) === 1
+    && Math.abs(affixScaleForChapter(26) - 1.5) < 1e-9
+    && Math.abs(affixScaleForChapter(50) - 1.98) < 1e-9
+    && affixScaleForChapter(80) === 2);
+check('多词缀掷取：去重、条数符合曲线、只落已解锁池、空池返回 []',
+    (() => {
+        for (let i = 0; i < 200; i++) {
+            const got = rollEliteAffixes(50, () => ((i * 7919) % 1000) / 1000);
+            if (got.length !== 3 || new Set(got).size !== got.length) return false;
+            if (got.some((a) => !affixPoolForChapter(50).includes(a))) return false;
+        }
+        return rollEliteAffixes(2, () => 0.5).length === 1   // 第 2 章池 2 条、曲线 1 条
+            && rollEliteAffixes(0, () => 0.5).length === 0;  // 空池防御
+    })());
+check('血怒成长后仍 < Boss 狂暴回复（第 50 章 ≈0.79%/s vs 0.83%/s，不抢生态位）',
+    (AFFIX_STATS[EnemyAffix.Vital].regenRatio * affixScaleForChapter(50)) / AFFIX_STATS[EnemyAffix.Vital].regenInterval < 0.05 / 6);
+
 // ── ② 波次配置真跑：isElite / isBoss 互斥矩阵 ──
 LevelManager.currentChapter = 3;
 LevelManager.currentLevel = 5;
@@ -80,24 +105,28 @@ check('第 10 关第 3 波 = Boss（isBoss 且 isElite=false：Boss 永不叠精
 // ── ③ 接线断言 ──
 const wave = strip(read('Battle', 'WaveManager.ts'));
 const enemy = strip(read('Battle', 'EnemyController.ts'));
-check('出怪侧：精英波掷词缀并 applyAffix（激活前时序，onLoad 护盾弧读到叠加层数）',
-    /if \(def\.isElite && !def\.isBoss\) \{\s*const affix = rollEliteAffix\(LevelManager\.currentChapter\);\s*if \(affix\) \{\s*ec\.applyAffix\(affix\);/.test(wave)
-    && wave.indexOf('ec.applyAffix(affix)') < wave.indexOf('enemy.setParent(this.node)'));
-check('铁壁：shieldCharges 叠加式（与铁甲天生 2 层可叠至 4，走既有格挡与弧视觉）',
-    /this\.shieldCharges \+= s\.shieldCharges;/.test(enemy));
-check('疾风：moveSpeed 乘算并取整',
-    /this\.moveSpeed = Math\.round\(this\.moveSpeed \* s\.speedMult\);/.test(enemy));
-check('血怒：start 挂定时器消费 regenInterval → vitalRegen 半强度回复',
-    /affix === EnemyAffix\.Vital && s\.regenInterval[\s\S]{0,80}schedule\(this\.vitalRegen, s\.regenInterval\)/.test(enemy)
-    && /private vitalRegen\(\): void/.test(enemy));
-check('随从：die 走 summon 管线（先扩容后计杀时序与史莱姆/Boss 一致），goldDrop=0',
-    /affix === EnemyAffix\.Retinue && !this\.isMini[\s\S]{0,400}summon: true,[\s\S]{0,40}goldDrop: 0/.test(enemy));
-check('可读性：徽章常驻（AffixBadge 挂血条上方）+ 出生跳字宣告「🎖️ 图标 名！」',
+check('出怪侧：精英波掷词缀组并逐条 applyAffix（激活前时序，onLoad 护盾弧读到叠加层数）',
+    /if \(def\.isElite && !def\.isBoss\) \{\s*for \(const affix of rollEliteAffixes\(LevelManager\.currentChapter\)\) \{\s*ec\.applyAffix\(affix, LevelManager\.currentChapter\);/.test(wave)
+    && wave.indexOf('ec.applyAffix(affix') < wave.indexOf('enemy.setParent(this.node)'));
+check('铁壁：shieldCharges 叠加式 × 章节强度（与铁甲天生 2 层可叠，走既有格挡与弧视觉）',
+    /this\.shieldCharges \+= Math\.round\(s\.shieldCharges \* scale\);/.test(enemy));
+check('疾风：moveSpeed 乘算并取整，成长受 AFFIX_HASTE_GROWTH 限幅',
+    /this\.moveSpeed = Math\.round\(this\.moveSpeed \* \(s\.speedMult \+ AFFIX_HASTE_GROWTH \* \(scale - 1\)\)\);/.test(enemy));
+check('血怒：start 挂定时器消费 regenInterval → vitalRegen 按章节成长比例回复',
+    /this\.affixes\.includes\(EnemyAffix\.Vital\) && vital\.regenInterval[\s\S]{0,120}schedule\(this\.vitalRegen, vital\.regenInterval\)/.test(enemy)
+    && /private vitalRegen\(\): void/.test(enemy)
+    && /const ratio = this\._affixRegenRatio > 0 \? this\._affixRegenRatio : AFFIX_STATS\[EnemyAffix\.Vital\]\.regenRatio;/.test(enemy));
+check('随从：die 走 summon 管线（先扩容后计杀时序与史莱姆/Boss 一致），召唤血量按章节成长、goldDrop=0',
+    /this\.affixes\.includes\(EnemyAffix\.Retinue\) && !this\.isMini[\s\S]{0,600}summon: true,[\s\S]{0,40}goldDrop: 0/.test(enemy)
+    && /const ratio = this\._affixSummonHpRatio > 0 \? this\._affixSummonHpRatio : \(s\.summonHpRatio \?\? 0\);/.test(enemy));
+check('可读性：徽章常驻（AffixBadge 矢量图标挂血条上方）+ 出生跳字宣告「精英来袭：词缀名！」',
     /new Node\('AffixBadge'\)/.test(enemy)
+    && /mountIcon\(n, AFFIX_STATS\[a\]\.icon, 20, Theme\.white/.test(enemy)
     && /n\.setPosition\(0, HP_BAR_OFFSET_Y \+ 24, 0\)/.test(enemy)
-    && /🎖️ \$\{s\.icon\} \$\{s\.name\}！/.test(enemy));
-check('applyAffix 幂等防御：重复施加直接覆盖标记（不叠加 moveSpeed 两次）',
-    /public applyAffix\(affix: EnemyAffix\): void \{\s*this\.affix = affix;/.test(enemy));
+    && /精英来袭：\$\{names\}！/.test(enemy));
+check('applyAffix 幂等防御：重复施加同词缀跳过（不重复叠盾、不叠乘 moveSpeed），章节强度缩放接入',
+    /public applyAffix\(affix: EnemyAffix, chapter: number = LevelManager\.currentChapter\): void \{\s*if \(this\.affixes\.includes\(affix\)\) \{\s*return;/.test(enemy)
+    && /const scale = affixScaleForChapter\(chapter\);/.test(enemy));
 
 console.log(failed === 0 ? '\n✅ 精英词缀自检全部通过' : `\n❌ ${failed} 项未通过`);
 if (failed > 0) process.exit(1);

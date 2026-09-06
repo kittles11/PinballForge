@@ -1,5 +1,6 @@
-import { _decorator, Component, Color, Label, Node, UIOpacity, UITransform, Tween, tween, find } from 'cc';
+import { _decorator, Component, Label, Node, UIOpacity, UITransform, Tween, tween, find } from 'cc';
 import { EventBus, GameEvents } from './EventBus';
+import { Theme } from './ArtTheme';
 import type { GameEventMap } from './EventBus';
 
 const { ccclass } = _decorator;
@@ -81,7 +82,7 @@ export class TutorialManager extends Component {
         }
         this._aimShown = true;
         this.scheduleOnce(() => {
-            this.showBanner('👆 按住屏幕拖拽瞄准，松手发射弹珠！', true);
+            this.showBanner('按住屏幕拖拽瞄准，松手发射弹珠！', true);
         }, AIM_HINT_DELAY);
     }
 
@@ -91,7 +92,7 @@ export class TutorialManager extends Component {
             return;
         }
         this._fireShown = true;
-        this.showBanner('漏斗聚能开火！数字越大伤害越高 ⚡', false);
+        this.showBanner('漏斗聚能开火！数字越大伤害越高', false);
         this.tryMarkDone();
     }
 
@@ -101,7 +102,7 @@ export class TutorialManager extends Component {
             return;
         }
         this._attackShown = true;
-        this.showBanner('小心！怪物冲撞城堡会扣血 🛡', false);
+        this.showBanner('小心！怪物冲撞城堡会扣城防！', false);
         this.tryMarkDone();
     }
 
@@ -145,7 +146,7 @@ export class TutorialManager extends Component {
         label.fontSize = 26;
         label.lineHeight = 32;
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
-        label.color = Color.WHITE;
+        label.color = Theme.white;
         node.setPosition(0, BANNER_Y, 0);
         host.addChild(node);
         this._banner = node;

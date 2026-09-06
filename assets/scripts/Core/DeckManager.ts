@@ -1,7 +1,7 @@
 import {
     _decorator, Component, Label, Node, Vec2, EventTouch,
 } from 'cc';
-import { DeckButtonController, TAP_SLOP } from '../UI/DeckButtonController';
+import { TAP_SLOP } from '../UI/DeckButtonController';
 import { EventBus, GameEvents } from './EventBus';
 import { TutorialManager } from './TutorialManager';
 import { OrbBalance } from './OrbBalance';
@@ -85,9 +85,7 @@ export class DeckManager extends Component {
         this.drawPile = [...this.masterDeck];
         this.shuffle(this.drawPile);
         this.updateDeckLabel();
-        // 🎒 牌库查看 UI 自举：顶部背包徽章（场景已布置同名节点则幂等复用，否则纯代码创建）。
-        // 牌库/遗物弹窗改由 DeckViewDialog 模块级自举挂载（本类不再反向 import 它，解除循环引用）。
-        DeckButtonController.ensureMounted();
+        // 🎒 右上角背包徽章已下线（2026-09-04 用户要求取消）：背包面板保留底部牌库文字轻点入口
         // 🎒 双通道呼出：底部牌库文字轻点同样打开背包面板（与右上角 🎒 徽章体验一致）
         this.bindDeckLabelTap();
         console.log(`[DeckManager] 初始卡组就绪：${this.masterDeck.map(t => ORB_TYPE_NAMES[t]).join('、')}（弹药永不枯竭）`);

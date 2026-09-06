@@ -42,10 +42,18 @@ export enum GameEvents {
     SHOW_DECK_VIEW = 'SHOW_DECK_VIEW',
     /** 打开 📋 每日任务面板（DailyTaskBadge 徽章发起，DailyTaskDialog 监听展示） */
     SHOW_DAILY_TASKS = 'SHOW_DAILY_TASKS',
+    /** 打开 📅 七日签到面板（DeckViewDialog 底部入口发起，SignInDialog 监听展示） */
+    SHOW_SIGNIN = 'SHOW_SIGNIN',
+    /** 打开 ⚙ 设置面板（DeckViewDialog 底部入口发起，SettingsDialog 监听展示） */
+    SHOW_SETTINGS = 'SHOW_SETTINGS',
     /** 敌人入场登记（EnemyController start 广播）：EnemyManager 监听登记，解除与 EnemyController 互相导入的循环引用 */
     ENEMY_SPAWNED = 'ENEMY_SPAWNED',
     /** 敌人销毁注销（EnemyController onDestroy 广播）：EnemyManager 监听即时移除列表引用 */
     ENEMY_REMOVED = 'ENEMY_REMOVED',
+    /** 📺 死亡复活（激励视频点位）：ResultDialog 发起，CastleController 原地复活、WaveManager 恢复刷怪并新星清场 */
+    RUN_REVIVED = 'RUN_REVIVED',
+    /** 🌌 无尽模式续战（50 章通关结算「进入无尽」）：ResultDialog 发起，WaveManager 从第 1 波重新起跑 */
+    RUN_CONTINUED = 'RUN_CONTINUED',
 }
 
 /** 事件 → 载荷 的映射。新增事件时只需在这里登记一次。 */
@@ -71,8 +79,12 @@ export interface GameEventMap {
     [GameEvents.RELIC_ACQUIRED]: RelicType;
     [GameEvents.SHOW_DECK_VIEW]: void;
     [GameEvents.SHOW_DAILY_TASKS]: void;
+    [GameEvents.SHOW_SIGNIN]: void;
+    [GameEvents.SHOW_SETTINGS]: void;
     [GameEvents.ENEMY_SPAWNED]: EnemyController;
     [GameEvents.ENEMY_REMOVED]: EnemyController;
+    [GameEvents.RUN_REVIVED]: void;
+    [GameEvents.RUN_CONTINUED]: void;
 }
 
 /** 监听器签名：无参事件（payload void）为 `() => void`，有参事件强制校验载荷类型 */

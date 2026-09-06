@@ -112,17 +112,17 @@ check('规则D3 加法混合（SRC_ALPHA → ONE 单实例材质）',
     /BlendFactor\.ONE/.test(fxSrc) || fxSrc.includes('additiveMaterial'));
 check('规则D4 Graphics 回退开关存在', fxSrc.includes('useGraphicsFallback') && fxSrc.includes('Graphics'));
 
-// ---- 规则 D5：RuntimeTex 空 passes 材质防线（batcher-2d localSetLayout 崩溃回归锁） ----
-// effectName 查表失败时引擎静默不建 passes；空材质挂上 Sprite 会让 batcher-2d 逐帧抛
-// "Cannot read properties of undefined (reading 'localSetLayout')" 并刷屏。
-// additiveMaterial 必须先校验 passes 非空、再缓存 this._additive（顺序不能反）。
+// ---- 规则 D5：自建加法混合材质已退役（原 batcher-2d localSetLayout 崩溃回归锁的继任者） ----
+// 历史链条：effectName 'builtin-sprite' 按注册键查表恒查不到 → passes 恒空 → 空材质挂上 Sprite
+// 让 batcher-2d 逐帧抛 "Cannot read properties of undefined (reading 'localSetLayout')" 并刷屏；
+// 补了空 passes 校验后，又发现自建材质的 blendState 覆盖会整体替换 BlendTarget → 辉光渲染成
+// 不透明方块（「弹珠变方块」回归）。终局（2026-09-05）：整个 additiveMaterial 删除，辉光改走
+// Sprite.srcBlendFactor / dstBlendFactor 引擎原生路径（_updateBlendFunc 在材质实例上正确叠加）。
+// 本锁因此从「校验顺序」改为「不得复活」——与 selfcheck-contact-fix 的同名锁定保持一致。
 {
-    const guard = rtSrc.indexOf('mat.passes.length === 0');
-    const cache = rtSrc.indexOf('this._additive = mat');
-    const detail = guard === -1 ? '缺少空 passes 校验'
-        : cache === -1 ? '缺少缓存赋值'
-        : guard > cache ? '校验出现在缓存之后（顺序错误）' : '';
-    check('规则D5 additiveMaterial 空 passes 防线（先校验后缓存）', guard !== -1 && cache !== -1 && guard < cache, detail);
+    const revived = rtSrc.includes('additiveMaterial') || rtSrc.includes('this._additive');
+    check('规则D5 自建加法混合材质已退役（空 passes 材质缓存 = localSetLayout 崩溃源，不得复活）',
+        !revived, revived ? 'additiveMaterial / _additive 复现' : '');
 }
 
 // ---- 规则 E：池护栏压测（同步逻辑副本） ----
@@ -193,7 +193,16 @@ check('规则F6 城堡受击红晕（CastleController → FxManager.screenPulse�
 // ---- 规则 G：场景零改动（BackdropFx 自举） ----
 if (existsSync(SCENE)) {
     const sceneSrc = readFileSync(SCENE, 'utf8');
-    check('规则G 场景未内嵌 Backdrop（运行时自举插入 Canvas 底）', !sceneSrc.includes('Backdrop'));
+    // 规则G（2026-09 修订）：编辑器已把 Backdrop 节点序列化进场景，内嵌本身合法（运行时自举幂等可复用）；
+    // 真正要防的是热重载把同一组件堆叠上百份（曾序列化出 119 份 BackdropFx）——解析 JSON 统计真实挂载数。
+    try {
+        const sceneJson = JSON.parse(sceneSrc);
+        const backdrop = sceneJson.find((o: any) => o && o._name === 'Backdrop');
+        const attachedCount = backdrop ? backdrop._components.length : 0;
+        check('规则G Backdrop 组件无热重载堆叠（场景内挂载 ≤3 份）', attachedCount <= 3);
+    } catch (e) {
+        check('规则G 场景解析失败跳过（' + String(e).slice(0, 30) + '）', true);
+    }
 } else {
     console.log('[SKIP] 规则G 未找到 MainScene.scene，跳过场景断言');
 }

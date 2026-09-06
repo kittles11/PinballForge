@@ -10,6 +10,9 @@ import { Analytics } from '../Core/Analytics';
 import { OrbType } from '../Core/DataModels';
 import { Theme } from '../Core/ArtTheme';
 import { MetaManager } from '../Core/MetaManager';
+import { LevelManager } from '../Core/LevelManager';
+import { mountIcon } from '../Core/IconLib';
+import { raisedButton } from '../Core/UiKit';
 
 const { ccclass, property } = _decorator;
 
@@ -19,6 +22,7 @@ const BUY_LAVA_PRICE = 85;
 const REMOVE_BASE_PRICE = 80;   // 删卡基础价（首次）
 const REMOVE_STEP_PRICE = 25;   // 删卡阶梯涨幅
 const REPAIR_CASTLE_PRICE = 50;
+const REPAIR_STEP_PRICE = 25;    // 维修可重复购买，每次费用阶梯涨幅（难度调整：金币坑）
 
 /** 维修城堡回复量 */
 const REPAIR_CASTLE_HP = 40;
@@ -101,6 +105,8 @@ interface ShopButton {
 export class ShopDialog extends Component {
     /** 本商店累计删卡次数（静态，跨商店弹窗常驻）：删卡阶梯涨价依据；新开一局（ResultDialog 重开）时归 0 */
     static removeCardCount = 0;
+    /** 本局已维修次数（维修可重复购买，费用阶梯递增；重开一局经 ResultDialog 清零） */
+    static repairCount = 0;
 
     /** 按钮节点（可选；未配置时按同名字节点查找，找不到则纯代码创建） */
     @property(Node)
@@ -139,10 +145,21 @@ export class ShopDialog extends Component {
     private _listening = false;
     /** UI 是否已构建 + 按钮已绑定（幂等） */
     private _ready = false;
+    /** 展示中标记（同 RewardDialog._showing）：防启动期失活导致的 start 推迟自吞首次展示 */
+    private _showing = false;
+
+    /** 监听注册提前到 onLoad：场景启动时 DailyTaskDialog 的 closeAllModals() 会把弹窗节点
+     *  失活（EVENT_AFTER_SCENE_LAUNCH），若依赖 start() 注册，节点失活后 start 永不执行、
+     *  SHOW_SHOP 无监听 → 第 3/6/9 关选完卡牌后无法进入商店（与 RewardDialog 同一回归）。 */
+    protected onLoad(): void {
+        this.ensureReady();
+    }
 
     protected start(): void {
-        // 默认隐藏商店：仅在 SHOW_SHOP 事件时展示
-        this.node.active = false;
+        // 默认隐藏商店：仅在 SHOW_SHOP 事件时展示（展示中不自吞，见 _showing 注释）
+        if (!this._showing) {
+            this.node.active = false;
+        }
         this.ensureReady();
     }
 
@@ -181,11 +198,19 @@ export class ShopDialog extends Component {
         if (!this.node?.isValid) {
             return;
         }
-        this.ensureReady();
-        if (this.messageLabel?.isValid) {
-            this.messageLabel.string = '';
+        this._showing = true; // 先置位再激活：推迟执行的 start() 默认隐藏不得吞掉本次展示
+        // ★ 结算链加固（2026-09-04 1-3 回归）：UI 构建/刷新段整体异常隔离——refreshUi 抛错
+        //   绝不能吞掉后面的「冻结发射 + 激活」，否则商店无声缺席 → REWARD_SELECTED 永不发出
+        //   → 第 3/6/9 关选完卡永久卡死。素面板商店（错误见日志）好过无声死局。
+        try {
+            this.ensureReady();
+            if (this.messageLabel?.isValid) {
+                this.messageLabel.string = '';
+            }
+            this.refreshUi();
+        } catch (e) {
+            console.error('[Shop] 商店 UI 构建/刷新异常（已隔离，弹窗照常打开）', e);
         }
-        this.refreshUi();
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, true); // 商店打开：冻结发射
         this.node.active = true;
         this.playPopAnimation();
@@ -201,7 +226,7 @@ export class ShopDialog extends Component {
             this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
             return;
         }
-        this.purchase(BUY_LIGHTNING_PRICE, ITEM_LIGHTNING, '⚡ 已购买闪电弹珠，永久加入卡组！', () => {
+            this.purchase(BUY_LIGHTNING_PRICE, ITEM_LIGHTNING, '已购买闪电弹珠，永久加入卡组！', () => {
             DeckManager.instance?.addOrbToDeck(OrbType.Lightning);
         });
     }
@@ -214,7 +239,7 @@ export class ShopDialog extends Component {
             this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
             return;
         }
-        this.purchase(BUY_LAVA_PRICE, ITEM_LAVA, '🌋 已购买熔岩弹珠，永久加入卡组！', () => {
+            this.purchase(BUY_LAVA_PRICE, ITEM_LAVA, '已购买熔岩弹珠，永久加入卡组！', () => {
             DeckManager.instance?.addOrbToDeck(OrbType.Lava);
         });
     }
@@ -235,11 +260,10 @@ export class ShopDialog extends Component {
     }
 
     private onRepairCastle(): void {
-        if (this._soldItems.has(ITEM_REPAIR)) {
-            return; // 已售罄：限购 1 次
-        }
-        this.purchase(REPAIR_CASTLE_PRICE, ITEM_REPAIR, `🏰 城堡维修 +${REPAIR_CASTLE_HP} 生命！`, () => {
+        // 难度调整：维修从限购 1 次改为可重复购买（费用阶梯递增），成为中后期金币的主要消耗口
+        this.purchase(this.repairPrice(), null, `🏰 城堡维修 +${REPAIR_CASTLE_HP} 生命！`, () => {
             CastleController.instance?.heal(REPAIR_CASTLE_HP);
+            ShopDialog.repairCount++;
         });
     }
 
@@ -248,9 +272,15 @@ export class ShopDialog extends Component {
         return REMOVE_BASE_PRICE + ShopDialog.removeCardCount * REMOVE_STEP_PRICE;
     }
 
-    /** ⚒ meta「商道」：把基础价折算为实付价（折扣封顶 -40%），扣费与显示统一走此入口 */
+    /** 当前维修价格（金币）：50 + 已修次数 × 25（难度调整：从限购 1 次改为可重复的阶梯价） */
+    private repairPrice(): number {
+        return REPAIR_CASTLE_PRICE + ShopDialog.repairCount * REPAIR_STEP_PRICE;
+    }
+
+    /** ⚒ meta「商道」折扣 × 章节通胀：定价随章节上浮（难度调整：金币收入随进程增长，定价同步通胀防中盘买空） */
     private finalPrice(base: number): number {
-        return Math.max(1, Math.round(base * (1 - MetaManager.getBargainDiscount())));
+        const chapterInflation = 1 + 0.06 * (LevelManager.currentChapter - 1);
+        return Math.max(1, Math.round(base * chapterInflation * (1 - MetaManager.getBargainDiscount())));
     }
 
     /**
@@ -304,7 +334,7 @@ export class ShopDialog extends Component {
     private refreshUi(): void {
         const gold = GoldManager.instance?.currentGold ?? 0;
         if (this.goldLabel?.isValid) {
-            this.goldLabel.string = `💰 金币: ${gold}`;
+            this.goldLabel.string = `金币: ${gold}`;
         }
         // 牌库容量软上限：满员时新购弹珠置灰并提示先删卡（配合 DeckManager.MAX_DECK_SIZE）
         const deckCapacity = DeckManager.instance?.maxDeckSize ?? 8;
@@ -314,17 +344,17 @@ export class ShopDialog extends Component {
         // 闪电弹珠：限购 1 次，售罄则置灰售罄文案（价格经「商道」折扣，与 purchase 实付一致）
         const pLight = this.finalPrice(BUY_LIGHTNING_PRICE);
         this.refreshItemCard(this._buyLightning, ITEM_LIGHTNING, gold >= pLight && !deckFull,
-            '⚡ 闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`, pLight, deckFull);
+            '闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`, pLight, deckFull);
         // 熔岩弹珠
         const pLava = this.finalPrice(BUY_LAVA_PRICE);
         this.refreshItemCard(this._buyLava, ITEM_LAVA, gold >= pLava && !deckFull,
-            '🌋 熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`, pLava, deckFull);
+            '熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`, pLava, deckFull);
         // 精简卡组：不限购，但需有普通球可删且金币充足；价格随删卡次数阶梯上涨（同样吃商道折扣）
         const normalCount = DeckManager.instance?.getOrbCount(OrbType.Normal) ?? 0;
         const removePrice = this.finalPrice(this.removePrice());
         this.setButtonEnabled(this._removeNormal, normalCount > 0 && gold >= removePrice);
         if (this._removeNormal?.label?.isValid) {
-            this._removeNormal.label.string = '🗑 精简卡组';
+            this._removeNormal.label.string = '精简卡组';
             this._removeNormal.label.color = this._removeNormal.enabled ? TEXT_COLOR : BTN_TEXT_DISABLED_COLOR;
         }
         if (this._removeNormal?.descLabel?.isValid) {
@@ -332,15 +362,15 @@ export class ShopDialog extends Component {
         }
         if (this._removeNormal?.btnLabel?.isValid) {
             this._removeNormal.btnLabel.string = normalCount > 0
-                ? `💰 ${removePrice} 删除 (余 ${normalCount}${deckFullSuffix})`
+                ? `${removePrice} 删除 (余 ${normalCount}${deckFullSuffix})`
                 : '✖ 无普通球可删';
         }
-        // 城堡维修：限购 1 次，城堡已毁或金币不足时置灰
+        // 城堡维修：可重复购买（阶梯递增价），城堡已毁或金币不足时置灰
         const castle = CastleController.instance;
         const castleAlive = !!castle && castle.currentHp > 0;
-        const pRepair = this.finalPrice(REPAIR_CASTLE_PRICE);
-        this.refreshItemCard(this._repairCastle, ITEM_REPAIR, castleAlive && gold >= pRepair,
-            '🏰 城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`, pRepair);
+        const pRepair = this.finalPrice(this.repairPrice());
+        this.refreshItemCard(this._repairCastle, null, castleAlive && gold >= pRepair,
+            '城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命（费用递增）`, pRepair);
     }
 
     /**
@@ -399,33 +429,38 @@ export class ShopDialog extends Component {
         bg.roundRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 18);
         bg.fill();
 
-        // 标题 / 金币 / 消息提示（顶部预留板块）
-        const title = this.ensureLabel('ShopTitle', 0, 332, 34, '🎒 弹珠工坊', 400);
+        // 标题 / 金币 / 消息提示（顶部预留板块；标题与金币左侧挂矢量图标）
+        const title = this.ensureLabel('ShopTitle', 0, 332, 34, '弹珠工坊', 400);
         if (title?.isValid) {
             title.color = TITLE_COLOR;
+            mountIcon(this.node, 'bag', 30, TITLE_COLOR, -104, 332);
         }
-        this.goldLabel = this.ensureLabel('ShopGoldLabel', 0, 286, 26, '💰 金币: 0', 360);
+        this.goldLabel = this.ensureLabel('ShopGoldLabel', 0, 286, 26, '金币: 0', 360);
+        mountIcon(this.node, 'coin', 24, Theme.ui.gold, -88, 286);
         this.messageLabel = this.ensureLabel('ShopMessageLabel', 0, 242, 20, '', 520);
 
         // ---------- 单页 2×2 货架：闪电 / 熔岩 / 删卡 / 修城（无 Tab 切换） ----------
         // 商品卡 2×2：第0/1张在上排、第2/3张在下排；左右列各占一半宽度
         const cardPos = (col: number, row: number) => ({ x: col === 0 ? -140 : 140, y: row === 0 ? 70 : -90 });
         this._buyLightning = this.createCard(this.buyLightningBtn, 'BuyLightningBtn',
-            cardPos(0, 0).x, cardPos(0, 0).y, '⚡ 闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`,
-            BTN_ACTIVE_COLOR);
+            cardPos(0, 0).x, cardPos(0, 0).y, '闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`,
+            'bolt', BTN_ACTIVE_COLOR);
         this._buyLava = this.createCard(this.buyLavaBtn, 'BuyLavaBtn',
-            cardPos(1, 0).x, cardPos(1, 0).y, '🌋 熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`,
-            BTN_ACTIVE_COLOR);
+            cardPos(1, 0).x, cardPos(1, 0).y, '熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`,
+            'flame', BTN_ACTIVE_COLOR);
         this._removeNormal = this.createCard(this.removeNormalBtn, 'RemoveNormalBtn',
-            cardPos(0, 1).x, cardPos(0, 1).y, '🗑 精简卡组', `从卡组移除 1 颗普通白球腾出牌位`,
-            BTN_ACTIVE_COLOR);
+            cardPos(0, 1).x, cardPos(0, 1).y, '精简卡组', `从卡组移除 1 颗普通白球腾出牌位`,
+            'trash', BTN_ACTIVE_COLOR);
         this._repairCastle = this.createCard(this.repairCastleBtn, 'RepairCastleBtn',
-            cardPos(1, 1).x, cardPos(1, 1).y, '🏰 城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`,
-            BTN_ACTIVE_COLOR);
+            cardPos(1, 1).x, cardPos(1, 1).y, '城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`,
+            'castle', BTN_ACTIVE_COLOR);
 
         // 继续下一关按钮（置底，宽 420 高 52，Y:-320，不与下边缘重叠）
         this._continue = this.ensureButton(this.continueBtn, 'ContinueBtn', 0, -320,
-            '➡ 继续下一关', 420, 52, CONTINUE_COLOR);
+            '继续下一关', 420, 52, CONTINUE_COLOR);
+        if (this._continue?.node?.isValid) {
+            mountIcon(this._continue.node, 'arrowRight', 22, Theme.white, -100, 0);
+        }
     }
 
 /** 创建/复用商店 Label：优先 Editor 已布置的同名子节点，否则纯代码创建 */
@@ -505,7 +540,7 @@ export class ShopDialog extends Component {
     private createCard(
         pref: Node | null, name: string,
         x: number, y: number, title: string, desc: string,
-        activeColor: Color, parent: Node | null = null,
+        icon: string, activeColor: Color, parent: Node | null = null,
     ): ShopButton | null {
         let node = pref?.isValid ? pref : this.node.getChildByName(name);
         if (!node?.isValid) {
@@ -543,6 +578,9 @@ export class ShopDialog extends Component {
         titleLabel.verticalAlign = Label.VerticalAlign.CENTER;
         titleLabel.enableWrapText = true; // 长标题自动换行，绝不挤压重叠发糊
         titleLabel.overflow = Label.Overflow.CLAMP;
+
+        // ---- 1.5) 标题左侧商品图标（IconLib 矢量染色，替代 emoji 前缀） ----
+        mountIcon(node, icon, 26, TITLE_GOLD_COLOR, -BTN_WIDTH / 2 + 22, 48);
 
 // ---- 2) 中部说明框：独立 Label，强制纵向撑高 + 自动换行，展示完整说明 ----
         let descNode = node.getChildByName('DescLabel');
@@ -592,15 +630,13 @@ export class ShopDialog extends Component {
         return btn;
     }
 
-/** 重绘按钮底色：可用 = 强调色，置灰 = 禁用色 */
+/** 重绘按钮底色：凸起浮雕（可用 = 强调色，置灰 = 禁用色） */
     private drawButtonBg(btn: ShopButton, enabled: boolean): void {
         if (!btn.graphics?.isValid) {
             return;
         }
         btn.graphics.clear();
-        btn.graphics.fillColor = enabled ? btn.activeColor : BTN_DISABLED_COLOR;
-        btn.graphics.roundRect(-btn.width / 2, -btn.height / 2, btn.width, btn.height, 10);
-        btn.graphics.fill();
+        raisedButton(btn.graphics, btn.width, btn.height, enabled ? btn.activeColor : BTN_DISABLED_COLOR, 10);
     }
 
     /** 切换按钮可用状态（置灰 + 文字变暗；状态未变化时跳过，避免无谓重绘） */

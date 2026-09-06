@@ -28,6 +28,22 @@ export function cloneColor(c: Color): Color {
     return c.clone();
 }
 
+/**
+ * 色阶派生：k > 0 向白靠拢（高光），k < 0 向黑靠拢（阴影/暗边），a 覆盖 alpha（缺省继承）。
+ * 凸起按钮 / 面板的立体感全部由语义色派生，不引入新 hex 字面量（防规则 B 漂移）。
+ */
+export function shadeColor(c: Color, k: number, a?: number): Color {
+    const t = Math.max(-1, Math.min(1, k));
+    const target = t >= 0 ? 255 : 0;
+    const mix = Math.abs(t);
+    return new Color(
+        Math.round(c.r + (target - c.r) * mix),
+        Math.round(c.g + (target - c.g) * mix),
+        Math.round(c.b + (target - c.b) * mix),
+        a ?? c.a,
+    );
+}
+
 // ---------- 共享基色（每个色值字面量全项目只允许出现一次） ----------
 const C_WHITE = 0xFFFFFF;
 const C_BLACK = 0x000000;
@@ -112,7 +128,7 @@ export const Theme = {
         bomb: hex(C_RED_DEEP),
         refresh: hex(0x32E664),
         hit: hex(C_HIT_GREEN),
-        exhaust: hex(0x999999),
+        exhaust: hex(0xB8C2D6), // 力竭钉淡蓝灰（原 #999999 在深蓝底上几乎不可见，玩家误以为钉子消失）
         lavaSplash: hex(0xFF3300),
         ringOff: hex(0x3A4050),
     },

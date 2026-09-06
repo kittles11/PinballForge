@@ -1,8 +1,10 @@
 import {
-    _decorator, Component, Node, Label, UITransform, director, Vec3, tween, Tween, Color,
+    _decorator, Component, Node, Label, UITransform, Sprite, director, Vec3, tween, Tween, Color, Graphics,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { EnemyController } from '../Battle/EnemyController';
+import { AdService } from '../Core/AdService';
+import { raisedButton } from '../Core/UiKit';
 import { GoldManager } from '../Core/GoldManager';
 import { RelicManager } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
@@ -10,7 +12,9 @@ import { ShopDialog } from './ShopDialog';
 import { OrbBalance } from '../Core/OrbBalance';
 import { MetaManager } from '../Core/MetaManager';
 import type { MetaUpgradeId } from '../Core/MetaManager';
-import { Theme } from '../Core/ArtTheme';
+import { cloneColor, Theme } from '../Core/ArtTheme';
+import { mountIcon } from '../Core/IconLib';
+import { closeAllModals } from '../Core/ModalGate';
 
 const { ccclass, property } = _decorator;
 
@@ -41,6 +45,13 @@ export class ResultDialog extends Component {
 
     /** 场景重载防抖：防连点重复 loadScene 引发双重销毁竞态 */
     private _restarting = false;
+    // ---------- 📺 广告点位 / 🌌 无尽入口状态（第 3/4 步 UI 接线；重载场景自然重置） ----------
+    /** 本局是否已用掉「📺 复活」广告（每局一次） */
+    private _adReviveUsed = false;
+    /** 本局是否已用掉「📺 碎片双倍」广告（每局一次） */
+    private _adShardsUsed = false;
+    /** 当前结算态：true 胜利 / false 失败（动作按钮可见性判定用） */
+    private _shownWin = false;
 
     // ---------- ⚒ 死亡补偿锻造区（P1-1：结算发碎片 + 永久升级原地购买） ----------
 
@@ -60,6 +71,8 @@ export class ResultDialog extends Component {
     private _forgePreview = false;
     /** 预览/购买切换按钮 Label */
     private _forgeToggle: Label | null = null;
+    /** 展示中标记（同 RewardDialog._showing）：防启动期失活导致的 start 推迟自吞首次展示 */
+    private _showing = false;
 
     protected onLoad(): void {
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
@@ -72,8 +85,10 @@ export class ResultDialog extends Component {
     }
 
     protected start(): void {
-        // 默认隐藏：仅在 GAME_OVER / GAME_VICTORY 事件时展示
-        this.node.active = false;
+        // 默认隐藏：仅在 GAME_OVER / GAME_VICTORY 事件时展示（展示中不自吞，见 _showing 注释）
+        if (!this._showing) {
+            this.node.active = false;
+        }
     }
 
     protected onDestroy(): void {
@@ -103,11 +118,60 @@ export class ResultDialog extends Component {
         if (!this.node?.isValid) {
             return;
         }
+        this._showing = true; // 先置位再激活：推迟执行的 start() 默认隐藏不得吞掉本次展示
         console.log('[Result] 结算弹窗打开：冻结发射');
+        // 结算置顶：战斗中开着的任务/背包弹窗是运行时代码节点，渲染序在本节点（场景节点）
+        // 之上——不先关掉，结算界面会被压在其遮罩之下，玩家关掉当前面板后会「又露出一个
+        // 关不掉的界面」（2026-09-04 排查）。FxLayer/FloatingTextLayer 同理在下方隐藏。
+        closeAllModals();
+        const uiLayer = this.node.parent;
+        if (uiLayer?.isValid) {
+            this.node.setSiblingIndex(uiLayer.children.length - 1);
+        }
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, true);
         this.node.active = true;
+        // ★ 面板加大（用户反馈：锻造区与再来一局按钮悬空在小面板外，与战斗层飘字叠在一起）：
+        // 内容带 = 标题(+160) ~ 再来一局(-140-按钮半高)；旧面板按 default_panel 贴图原始尺寸渲染（约 430×430）。
+        // 结算期间隐藏特效层与飘字层（两者渲染序都在弹窗之上：伤害跳字/「精炼+1」会压在结算文字上；
+        // 场景重载后两层层均按需惰性重建，无需恢复）。
+        for (const layerName of ['FxLayer', 'FloatingTextLayer']) {
+            const layer = this.node.parent?.getChildByName(layerName);
+            if (layer?.isValid) {
+                layer.active = false;
+            }
+        }
+        const panelUi = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
+        panelUi.setContentSize(640, 880);
+        const panelSprite = this.node.getComponent(Sprite);
+        if (panelSprite) {
+            panelSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+            panelSprite.type = Sprite.Type.SIMPLE;
+        }
+        // 再来一局按钮下移：面板加大后腾出锻造区完整四行空间（原 -140 与第四行升级文字重叠）
+        if (this.restartBtn?.isValid) {
+            this.restartBtn.setPosition(0, -390, 0);
+        }
+        // 标题/说明强制几何（修复字体叠加）：场景旧 Label 无显式宽度，SHRINK 下窄宽会把标题折行压到说明文字上
         if (this.titleLabel?.isValid) {
-            this.titleLabel.string = isWin ? '🎉 战斗胜利！' : '💀 城堡沦陷';
+            this.titleLabel.fontSize = 32;
+            this.titleLabel.lineHeight = 40;
+            this.titleLabel.overflow = Label.Overflow.SHRINK;
+            this.titleLabel.node.getComponent(UITransform)?.setContentSize(480, 52);
+        }
+        if (this.descLabel?.isValid) {
+            this.descLabel.fontSize = 20;
+            this.descLabel.lineHeight = 26;
+            this.descLabel.overflow = Label.Overflow.SHRINK;
+            this.descLabel.node.getComponent(UITransform)?.setContentSize(560, 72);
+        }
+        if (this.titleLabel?.isValid) {
+            this.titleLabel.string = isWin ? '战斗胜利！' : '城堡沦陷';
+            // 标题左侧挂胜负矢量图标（先清两态旧图标再挂当前态，幂等）
+            this.titleLabel.node.children.filter((c) => c.name.startsWith('Icon_')).forEach((c) => c.destroy());
+            mountIcon(
+                this.titleLabel.node, isWin ? 'star' : 'skull', 34,
+                isWin ? Theme.ui.gold : Theme.ui.red, -118, 0,
+            );
         }
         if (this.descLabel?.isValid) {
             this.descLabel.string = isWin
@@ -122,6 +186,9 @@ export class ResultDialog extends Component {
             );
         }
         this.ensureForgeSection();
+        this._shownWin = isWin;
+        this.ensureActionButtons();
+        this.refreshActionButtons();
         this.refreshForge();
         this.playPopAnimation();
     }
@@ -142,10 +209,10 @@ export class ResultDialog extends Component {
         this._forgeRoot = root;
 
         // 顶部：碎片余额（整行居中）
-        this._shardsLabel = this.makeForgeRow(root, 0, 42, 17, FORGE_COLOR_SHARDS, 520);
+        this._shardsLabel = this.makeForgeRow(root, 0, 42, 17, FORGE_COLOR_SHARDS, 400);
         // 头部右侧：解锁总览切换按钮（📖 看效果 / 💰 购买），复用行节点仅换文案，不动布局
-        this._forgeToggle = this.makeForgeRow(root, 210, 42, 13, FORGE_COLOR_SHARDS, 100);
-        this._forgeToggle.string = '📖 总览';
+        this._forgeToggle = this.makeForgeRow(root, 250, 42, 13, FORGE_COLOR_SHARDS, 90);
+        this._forgeToggle.string = '总览';
         this._forgeToggle.node.on(Node.EventType.TOUCH_END, () => this.toggleForgePreview(), this);
         // 升级行：按 getUpgradeList 树分支序分列（前段左 / 中段中 / 后段右），整行可点购买
         const list = MetaManager.getUpgradeList();
@@ -155,7 +222,7 @@ export class ResultDialog extends Component {
         const colX = cols === 1 ? [0] : cols === 2 ? [-128, 128] : [-170, 0, 170];
         const rowW = cols === 3 ? 166 : 248;
         const fs = cols === 3 ? 12 : 13;
-        const spacing = perCol <= 4 ? 30 : 25;
+        const spacing = perCol <= 4 ? 34 : 28;
         // 三列窄行放不下「效果」文案 → 紧凑模式仅显示 名称 Lv 价格（效果由名称+等级隐含）
         this._forgeCompact = cols >= 3;
         this._rowLabels = list.map((u, i) => {
@@ -163,7 +230,7 @@ export class ResultDialog extends Component {
             const row = i % perCol;
             const x = colX[col];
             const y = 14 - row * spacing;
-            const label = this.makeForgeRow(root, x, y, fs, Color.WHITE.clone(), rowW);
+            const label = this.makeForgeRow(root, x, y, fs, cloneColor(Theme.white), rowW);
             label.node.on(Node.EventType.TOUCH_END, () => this.onForgeRowClick(u.id), this);
             return label;
         });
@@ -189,7 +256,7 @@ export class ResultDialog extends Component {
     /** 刷新锻造区文案与配色：购买模式（名称 Lv 价格）/ 预览模式（名称·效果，🔒 显示前置） */
     private refreshForge(): void {
         if (this._shardsLabel?.isValid) {
-            this._shardsLabel.string = `⚒ 精铸碎片 ${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
+            this._shardsLabel.string = `精铸碎片 ◆${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
         }
         const list = MetaManager.getUpgradeList();
         list.forEach((u, i) => {
@@ -221,7 +288,7 @@ export class ResultDialog extends Component {
                 label.string = `${u.name} Lv${lv}${effect ? ' ' + effect : ''} MAX`;
                 label.color = FORGE_COLOR_MAXED;
             } else {
-                label.string = `${u.name} Lv${lv}${effect ? ' ' + effect : ''} ⚒${price}`;
+                label.string = `${u.name} Lv${lv}${effect ? ' ' + effect : ''} ◆${price}`;
                 label.color = MetaManager.canAfford(u.id) ? FORGE_COLOR_BUYABLE : FORGE_COLOR_LOCKED;
             }
         });
@@ -231,7 +298,7 @@ export class ResultDialog extends Component {
     private toggleForgePreview(): void {
         this._forgePreview = !this._forgePreview;
         if (this._forgeToggle?.isValid) {
-            this._forgeToggle.string = this._forgePreview ? '💰 购买' : '📖 总览';
+            this._forgeToggle.string = this._forgePreview ? '购买' : '总览';
         }
         this.refreshForge();
     }
@@ -246,6 +313,121 @@ export class ResultDialog extends Component {
         }
         console.log(`[Result] 锻造升级 ${id} → Lv${MetaManager.getLv(id)}`);
         this.refreshForge();
+    }
+
+    // ---------- 📺 广告点位 + 🌌 无尽入口（第 3/4 步 UI 接线）----------
+    // 按钮纯代码构建（锻造区同款手法，无 Inspector 依赖）：失败态显示 复活/碎片双倍 两枚，
+    // 终局胜利态显示「进入无尽」一枚（LevelManager.isFinalBattle() 判定，与结算文案同源）。
+
+    /** 三枚动作按钮幂等创建（节点复用，每次结算只刷新文案与可见性） */
+    private ensureActionButtons(): void {
+        this.makeActionButton('AdReviveBtn', -150, '📺 看广告 复活', () => this.onReviveClick());
+        this.makeActionButton('AdDoubleBtn', 150, '', () => this.onShardsDoubleClick());
+        this.makeActionButton('EndlessBtn', 0, '🌌 进入无尽模式', () => this.onEndlessClick());
+    }
+
+    /** 结算动作按钮统一样式：凸起金底 + 居中文案（y=-330，锻造区与再来一局之间） */
+    private makeActionButton(name: string, x: number, text: string, onClick: () => void): void {
+        let node = this.node.getChildByName(name);
+        if (!node || !node.isValid) {
+            node = new Node(name);
+            node.layer = this.node.layer;
+            this.node.addChild(node);
+            node.setPosition(x, -330, 0);
+            node.addComponent(UITransform).setContentSize(236, 56);
+            const g = node.addComponent(Graphics);
+            raisedButton(g, 236, 56, Theme.ui.goldDim, 12);
+            const labelNode = new Node('Label');
+            labelNode.layer = node.layer;
+            node.addChild(labelNode);
+            labelNode.addComponent(UITransform).setContentSize(236, 56);
+            const label = labelNode.addComponent(Label);
+            label.fontSize = 18;
+            label.lineHeight = 24;
+            label.color = Theme.white.clone();
+            label.horizontalAlign = Label.HorizontalAlign.CENTER;
+            label.verticalAlign = Label.VerticalAlign.CENTER;
+            node.on(Node.EventType.TOUCH_END, onClick, this);
+        }
+        if (text) {
+            const lbl = node.getChildByName('Label')?.getComponent(Label);
+            if (lbl?.isValid) {
+                lbl.string = text;
+            }
+        }
+    }
+
+    /** 按当前结算态刷新动作按钮可见性（复活/双倍：失败态；进入无尽：终局胜利态） */
+    private refreshActionButtons(): void {
+        const reviveBtn = this.node.getChildByName('AdReviveBtn');
+        if (reviveBtn?.isValid) {
+            reviveBtn.active = !this._shownWin && !this._adReviveUsed;
+        }
+        const doubleBtn = this.node.getChildByName('AdDoubleBtn');
+        if (doubleBtn?.isValid) {
+            doubleBtn.active = !this._shownWin && !this._adShardsUsed && this._gainedShards > 0;
+        }
+        const endlessBtn = this.node.getChildByName('EndlessBtn');
+        if (endlessBtn?.isValid) {
+            endlessBtn.active = this._shownWin && LevelManager.isFinalBattle() && !LevelManager.endless;
+        }
+    }
+
+    /** 📺 复活点位：看完整广告 → 广播 RUN_REVIVED（城堡满血原地复活 + 波次清场续播；每局一次） */
+    private onReviveClick(): void {
+        if (this._adReviveUsed) {
+            return;
+        }
+        AdService.showRewarded('revive', () => {
+            this._adReviveUsed = true;
+            console.log('[Result] 广告复活：撤销本次失败，本局战斗原地继续');
+            this.dismissAndContinue(GameEvents.RUN_REVIVED);
+        });
+    }
+
+    /** 📺 碎片双倍点位：看完整广告 → 本局结算碎片再入账一次（每局一次） */
+    private onShardsDoubleClick(): void {
+        if (this._adShardsUsed || this._gainedShards <= 0) {
+            return;
+        }
+        AdService.showRewarded('shards_double', () => {
+            this._adShardsUsed = true;
+            const bonus = this._gainedShards;
+            MetaManager.addShards(bonus);
+            this._gainedShards += bonus;
+            console.log(`[Result] 广告双倍碎片：+◆${bonus}（本局结算共 +◆${this._gainedShards}）`);
+            this.refreshForge();
+            this.refreshActionButtons();
+        });
+    }
+
+    /** 🌌 终局胜利进入无尽：LevelManager 切到无尽进度并广播 RUN_CONTINUED（本局构筑原地延续） */
+    private onEndlessClick(): void {
+        if (LevelManager.endless) {
+            return;
+        }
+        LevelManager.enterEndless();
+        console.log('[Result] 进入无尽模式：本局牌组/遗物/金币延续，波次重新起跑');
+        this.dismissAndContinue(GameEvents.RUN_CONTINUED);
+    }
+
+    /**
+     * 关闭结算面板并广播续战事件（复活 / 无尽续战共用）：不重载场景，本局继续。
+     * 结算时被隐藏的特效层 / 飘字层在这里恢复（续战路径没有场景重载兜底，必须手动还原）。
+     */
+    private dismissAndContinue(evt: GameEvents): void {
+        this._showing = false;
+        this._rewardGranted = false; // 续战后的下一次结算需重新发碎片
+        this._gainedShards = 0;
+        this.node.active = false;
+        EventBus.emit(GameEvents.UI_MODAL_CHANGED, false); // 恢复发射输入（LauncherController 事件 + 看门狗双保险）
+        for (const layerName of ['FxLayer', 'FloatingTextLayer']) {
+            const layer = this.node.parent?.getChildByName(layerName);
+            if (layer?.isValid) {
+                layer.active = true;
+            }
+        }
+        EventBus.emit(evt);
     }
 
     /** 弹窗浮现动效：0.85 → 1.06 → 1 弹性放大 */
@@ -279,6 +461,7 @@ export class ResultDialog extends Component {
         LevelManager.resetProgress();
         // ★ 重开前重置商店静态删卡次数，删卡阶梯价从 75 重新起步
         ShopDialog.removeCardCount = 0;
+        ShopDialog.repairCount = 0;
         // 动态场景名：以当前场景为准，避免硬编码 'MainScene' 与实际场景名不一致时报错
         const sceneName = director.getScene()?.name || 'MainScene';
         console.log(`[Result] 点击再来一局，重新加载 ${sceneName}`);

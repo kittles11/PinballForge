@@ -5,8 +5,10 @@ import {
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { DailyTaskManager } from '../Core/DailyTaskManager';
 import type { DailyTaskInfo } from '../Core/DailyTaskManager';
-import { DailyTaskBadge } from './DailyTaskBadge';
 import { Theme } from '../Core/ArtTheme';
+import { mountIcon } from '../Core/IconLib';
+import { raisedButton } from '../Core/UiKit';
+import { closeAllModals } from '../Core/ModalGate';
 
 const { ccclass } = _decorator;
 
@@ -53,8 +55,13 @@ export class DailyTaskDialog extends Component {
         }
         DailyTaskDialog._bootstrapped = true;
         director.on(Director.EVENT_AFTER_SCENE_LAUNCH, () => {
-            DailyTaskBadge.ensureMounted();
+            // 📋 右上角每日任务徽章已下线（2026-09-04 用户要求取消）：面板保留，仅无呼出入口
             DailyTaskDialog.ensureMounted();
+            // 场景刚启动完毕：全部模态弹窗一律复位为隐藏。场景文件可能残留 active=true 的
+            // 弹窗节点（编辑器把热重载堆积的运行时脏数据固化进了场景，2026-09-04 排查），
+            // 开场即常驻挡屏且未经 showDialog（任务行文字为空、模态状态错乱）。新场景加载完
+            // 本就不该有任何弹窗开着，这是不变量；热重载不触发本事件，不影响调试中打开的弹窗。
+            closeAllModals();
         });
     }
 
@@ -68,15 +75,24 @@ export class DailyTaskDialog extends Component {
         if (!node?.isValid) {
             node = new Node('DailyTaskDialog');
             node.layer = uiLayer.layer;
+            node.active = false; // 创建即隐藏：避免 start() 竞态（见下方注释）
             uiLayer.addChild(node);
         }
-        if (!node.getComponent(DailyTaskDialog)) {
+        // 热重载防御：只保留首个组件实例，多余销毁（与 DailyTaskBadge 同款——
+        // 否则每次热重载重挂一个实例，buildUI 就会再堆一组子节点）
+        const comps = node.getComponents(DailyTaskDialog);
+        for (let i = 1; i < comps.length; i++) {
+            comps[i].destroy();
+        }
+        if (comps.length === 0) {
             node.addComponent(DailyTaskDialog);
         }
     }
 
     protected start(): void {
-        this.node.active = false; // 默认隐藏：仅 SHOW_DAILY_TASKS 时展示
+        // 不再无条件 this.node.active = false：节点在 ensureMounted 创建时即为隐藏态，
+        // 若热重载时弹窗正处于打开状态，start() 强行关闭会丢掉 UI_MODAL_CHANGED false
+        // 广播，导致徽章/发射器模态镜像卡 true（弹窗消失但发射永久冻结）。
         this.ensureReady();
     }
 
@@ -101,15 +117,29 @@ export class DailyTaskDialog extends Component {
         }
     }
 
-    /** 打开面板：刷新三行 + 冻结发射 + 弹性入场 */
+    /** 打开面板：确保 UI 已构建（子节点丢失时重建）→ 刷新三行 → 冻结发射 → 弹性入场 */
     private showDialog(): void {
         if (!this.node?.isValid) {
             return;
         }
+        // 防御性重建：start 时构建的 UI 若被中途清掉（热重载堆叠清理等），_ready 仍是 true 会
+        // 激活一个空节点——模态锁上、屏幕无物。子节点数为 0 即强制重建（2026-09-03 排查）。
+        this.ensureReady();
+        if (this.node.children.length === 0) {
+            console.warn('[诊断] DailyTaskDialog 子节点丢失，重建 UI');
+            this._ready = false;
+            this.ensureReady();
+        }
         this.refreshRows();
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, true); // 面板打开：冻结发射
         this.node.active = true;
+        this.node.setPosition(0, 0, 0);
+        this.node.setScale(1, 1, 1);
         this.playPopAnimation();
+        const wp = this.node.worldPosition;
+        console.log(`[诊断] DailyTaskDialog 打开: 层级有效=${this.node.activeInHierarchy} ` +
+            `world=(${wp.x.toFixed(0)},${wp.y.toFixed(0)}) scale=${this.node.scale.x.toFixed(2)} ` +
+            `children=${this.node.children.length} parent=${this.node.parent?.name ?? '无'}`);
     }
 
     /** 关闭面板：恢复发射 */
@@ -129,16 +159,14 @@ export class DailyTaskDialog extends Component {
             if (!row?.label?.isValid) {
                 return;
             }
-            row.label.string = `${info.name}（奖励 ⚒${info.reward}）\n${info.desc} · ${info.progress}/${info.target}`;
+            row.label.string = `${info.name}（奖励 ◆${info.reward}）\n${info.desc} · ${info.progress}/${info.target}`;
             const canClaim = DailyTaskManager.canClaim(info.id);
             const btnG = row.btn.getComponent(Graphics);
             if (btnG) {
                 btnG.clear();
-                btnG.fillColor = info.claimed ? CLAIMED_COLOR : canClaim ? CLAIM_COLOR : DISABLED_COLOR;
-                btnG.roundRect(-90, -22, 180, 44, 10);
-                btnG.fill();
+                raisedButton(btnG, 180, 44, info.claimed ? CLAIMED_COLOR : canClaim ? CLAIM_COLOR : DISABLED_COLOR, 10);
             }
-            row.btnLabel.string = info.claimed ? '已领取 ✓' : canClaim ? '⚒ 领取' : '未完成';
+            row.btnLabel.string = info.claimed ? '已领取 ✓' : canClaim ? '领 取' : '未完成';
         });
     }
 
@@ -156,6 +184,11 @@ export class DailyTaskDialog extends Component {
     // ---------- 纯代码 UI 构建（零 Inspector 配置；ShopDialog / DeckViewDialog 同款手法） ----------
 
     private buildUI(): void {
+        // 幂等重建：热重载/重复挂载会让本函数反复执行（_ready 标志随实例重建丢失）。
+        // Overlay/ClaimBtn 每次都是新建，若不先清旧节点，几十层全屏半透明遮罩会叠压到
+        // 面板之上——屏幕被压黑、触摸全部被最上层遮罩拦截（关闭按钮/徽章点不动）。
+        this.node.removeAllChildren();
+        this._rows = [];
         // 0) 全屏暗色遮罩：拦截点击穿透到背后钉板/发射器（点遮罩不关闭，防战斗中误触丢失面板）
         const overlay = new Node('Overlay');
         overlay.layer = this.node.layer;
@@ -176,9 +209,10 @@ export class DailyTaskDialog extends Component {
         bg.roundRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 18);
         bg.fill();
 
-        // 2) 标题 / 副标题
-        const title = this.ensureLabel('Title', 0, 292, 34, '📋 每日任务');
+        // 2) 标题 / 副标题（标题左侧挂矢量写字板图标，与顶部徽章同源）
+        const title = this.ensureLabel('Title', 0, 292, 34, '每日任务');
         title.color = TITLE_COLOR;
+        mountIcon(this.node, 'clipboard', 30, TITLE_COLOR, -96, 292);
         const subtitle = this.ensureLabel('Subtitle', 0, 246, 18, '进度跨对局累计 · 每日 0 点刷新');
         subtitle.color = SUBTITLE_COLOR;
 
@@ -196,9 +230,7 @@ export class DailyTaskDialog extends Component {
             btn.addComponent(UITransform).setContentSize(180, 44);
             btn.setPosition(0, rowY - 34, 0);
             const g = btn.addComponent(Graphics);
-            g.fillColor = DISABLED_COLOR;
-            g.roundRect(-90, -22, 180, 44, 10);
-            g.fill();
+            raisedButton(g, 180, 44, DISABLED_COLOR, 10);
             const btnLabelNode = new Node('BtnLabel');
             btnLabelNode.layer = btn.layer;
             btn.addChild(btnLabelNode);
@@ -222,9 +254,7 @@ export class DailyTaskDialog extends Component {
             closeBtn.setPosition(0, -250, 0);
             closeBtn.addComponent(UITransform).setContentSize(260, 56);
             const cg = closeBtn.addComponent(Graphics);
-            cg.fillColor = CLOSE_BTN_COLOR;
-            cg.roundRect(-130, -28, 260, 56, 12);
-            cg.fill();
+            raisedButton(cg, 260, 56, CLOSE_BTN_COLOR, 12);
             cg.lineWidth = 2;
             cg.strokeColor = CLOSE_BTN_BORDER;
             cg.roundRect(-130, -28, 260, 56, 12);
@@ -238,7 +268,7 @@ export class DailyTaskDialog extends Component {
             closeLabel.string = '✕ 关 闭';
             closeLabel.fontSize = 22;
             closeLabel.lineHeight = 30;
-            closeLabel.color = Color.WHITE;
+            closeLabel.color = Theme.white;
             closeLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
             closeLabel.verticalAlign = Label.VerticalAlign.CENTER;
         }
@@ -246,15 +276,15 @@ export class DailyTaskDialog extends Component {
         closeBtn.on(Node.EventType.TOUCH_END, this.closeDialog, this);
     }
 
-    /** 创建/复用文本 Label（SHRINK 自缩字号防溢出） */
-    private ensureLabel(name: string, x: number, y: number, fontSize: number, text: string): Label {
+    /** 创建/复用文本 Label（显式宽度 + SHRINK 自缩：默认 100px 宽会把标题折行压到副标题上——字体叠加根源） */
+    private ensureLabel(name: string, x: number, y: number, fontSize: number, text: string, width = 460): Label {
         let node = this.node.getChildByName(name);
         if (!node?.isValid) {
             node = new Node(name);
             node.layer = this.node.layer;
             this.node.addChild(node);
             node.setPosition(x, y, 0);
-            node.addComponent(UITransform);
+            node.addComponent(UITransform).setContentSize(width, fontSize + 16);
             const label = node.addComponent(Label);
             label.string = text;
             label.fontSize = fontSize;

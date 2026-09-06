@@ -220,7 +220,7 @@ export enum EnemyAffix {
     Retinue = 'Retinue',
 }
 
-/** 词缀展示与数值表（外观 icon + 名称供徽章与出生跳字，数值供 EnemyController 应用） */
+/** 词缀展示与数值表（icon = IconLib 图标名供徽章矢量渲染，名称供出生跳字；数值供 EnemyController 应用） */
 export const AFFIX_STATS: Record<EnemyAffix, {
     icon: string;
     name: string;
@@ -231,10 +231,10 @@ export const AFFIX_STATS: Record<EnemyAffix, {
     summonCount?: number;
     summonHpRatio?: number;
 }> = {
-    [EnemyAffix.Bulwark]: { icon: '🛡️', name: '铁壁', shieldCharges: 2 },
-    [EnemyAffix.Haste]: { icon: '⚡', name: '疾风', speedMult: 1.35 },
-    [EnemyAffix.Vital]: { icon: '🩸', name: '血怒', regenRatio: 0.02, regenInterval: 5 },
-    [EnemyAffix.Retinue]: { icon: '👑', name: '随从', summonCount: 2, summonHpRatio: 0.25 },
+    [EnemyAffix.Bulwark]: { icon: 'shield', name: '铁壁', shieldCharges: 2 },
+    [EnemyAffix.Haste]: { icon: 'bolt', name: '疾风', speedMult: 1.35 },
+    [EnemyAffix.Vital]: { icon: 'drop', name: '血怒', regenRatio: 0.02, regenInterval: 5 },
+    [EnemyAffix.Retinue]: { icon: 'crown', name: '随从', summonCount: 2, summonHpRatio: 0.25 },
 };
 
 /** 词缀解锁章节（与敌人解锁同范式）：铁壁第 1 章 / 疾风第 2 章 / 血怒第 3 章 / 随从第 4 章 */
@@ -258,6 +258,32 @@ export function rollEliteAffix(chapter: number, rand: () => number = Math.random
         return null;
     }
     return pool[Math.min(pool.length - 1, Math.floor(rand() * pool.length))];
+}
+
+/** 精英词缀数量曲线（难度方案B）：第 10 章起挂 2 条、第 25 章起挂 3 条（旧曲线恒 1 条），压力随进程递进 */
+export function affixCountForChapter(chapter: number): number {
+    return chapter >= 25 ? 3 : chapter >= 10 ? 2 : 1;
+}
+
+/** 精英词缀强度成长（难度方案B）：数值随章节线性放大，×1 → 第 51 章 ×2 封顶（铁壁盾层 / 血怒回复 / 随从血量） */
+export function affixScaleForChapter(chapter: number): number {
+    return 1 + Math.min(1, (chapter - 1) * 0.02);
+}
+
+/** 疾风移速成长幅度（难度方案B）：×1.35 基础上每点强度成长 +0.15，第 51 章封顶 ×1.5，避免与全局移速曲线叠乘失控 */
+export const AFFIX_HASTE_GROWTH = 0.15;
+
+/** 精英出生掷一组去重词缀（难度方案B 多词缀；rand 可注入，自检确定性真跑；空池防御性返回 []） */
+export function rollEliteAffixes(chapter: number, rand: () => number = Math.random): EnemyAffix[] {
+    const pool = affixPoolForChapter(chapter);
+    const want = Math.min(pool.length, affixCountForChapter(chapter));
+    // Fisher–Yates 洗牌后取前 want 条：同波多精英不重词缀，且每条词缀等概率
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.min(i, Math.floor(rand() * (i + 1)));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, want);
 }
 
 /** 运行时兜底手搓怪的身体半径（WaveManager 绘制与 EnemyController 重绘共用，保证染色一致） */
@@ -376,7 +402,7 @@ export enum RelicType {
     CrownOfKings = 'CrownOfKings',
 }
 
-/** 遗物数据表项：名称 / 图标 / 效果描述 / 售价（商店展示与购买共用） */
+/** 遗物数据表项：名称 / 图标（IconLib 图标名）/ 效果描述 / 售价（商店展示与购买共用） */
 export interface RelicData {
     name: string;
     icon: string;
@@ -386,11 +412,11 @@ export interface RelicData {
 
 /** 全部遗物的数据表（单价统一 130 金币，全局常驻被动，无需装填发射） */
 export const RELIC_DATABASE: Record<RelicType, RelicData> = {
-    [RelicType.GoldMiner]: { name: '黄金矿工', icon: '⛏️', desc: '全场每次撞钉额外 +1 金币', price: 130 },
-    [RelicType.HighExplosive]: { name: '高能烈药', icon: '💥', desc: '炸药钉爆炸半径扩大至 180px', price: 130 },
-    [RelicType.ThornCastle]: { name: '荆棘要塞', icon: '🛡️', desc: '怪物撞城自动反弹 35 点真实伤害', price: 130 },
-    [RelicType.TidalGild]: { name: '潮汐镀金', icon: '🌊', desc: '每波开始时随机 2 颗普通钉镀金为乘倍钉，波末退潮复原', price: 130 },
-    [RelicType.CrownOfKings]: { name: '王者之冕', icon: '👑', desc: '通关结算额外 +30 金币与 15 点要塞护盾', price: 130 },
+    [RelicType.GoldMiner]: { name: '黄金矿工', icon: 'pickaxe', desc: '全场每次撞钉额外 +1 金币', price: 130 },
+    [RelicType.HighExplosive]: { name: '高能烈药', icon: 'boom', desc: '炸药钉爆炸半径扩大至 180px', price: 130 },
+    [RelicType.ThornCastle]: { name: '荆棘要塞', icon: 'shield', desc: '怪物撞城自动反弹 35 点真实伤害', price: 130 },
+    [RelicType.TidalGild]: { name: '潮汐镀金', icon: 'wave', desc: '每波开始时随机 2 颗普通钉镀金为乘倍钉，波末退潮复原', price: 130 },
+    [RelicType.CrownOfKings]: { name: '王者之冕', icon: 'crown', desc: '通关结算额外 +30 金币与 15 点要塞护盾', price: 130 },
 };
 
 /** 全部遗物（商店展示顺序） */
@@ -402,12 +428,12 @@ export const ALL_RELIC_TYPES: RelicType[] = [
     RelicType.CrownOfKings,
 ];
 
-/** 卡牌流派（三大流派 + 中立通用） */
+/** 卡牌流派（三大流派 + 中立通用；显示名不含 emoji——卡面用 UiKit 边框与流派色条表达） */
 export enum CardArchetype {
-    Lava = '🔥 爆裂熔岩流',
-    Lightning = '⚡ 裂变电光流',
-    Frost = '❄️ 极寒冰封流',
-    Universal = '⚙️ 中立通用',
+    Lava = '爆裂熔岩流',
+    Lightning = '裂变电光流',
+    Frost = '极寒冰封流',
+    Universal = '中立通用',
 }
 
 /** 战后三选一卡牌：定义卡牌的唯一效果与展现信息 */

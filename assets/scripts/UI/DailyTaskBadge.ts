@@ -1,20 +1,24 @@
 import {
-    _decorator, Component, Node, Label, UITransform, Graphics, Color, find,
+    _decorator, Component, Node, UITransform, Graphics, Vec2, EventTouch, find,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { DailyTaskManager } from '../Core/DailyTaskManager';
+import { TAP_SLOP } from './DeckButtonController';
 import { Theme } from '../Core/ArtTheme';
+import { mountIcon } from '../Core/IconLib';
+import { anyModalOpen } from '../Core/ModalGate';
 
 const { ccclass } = _decorator;
 
-// ---------- 徽章样式：DeckButtonController 同款 36×36 圆形徽章，位于 🎒 徽章左侧 44px ----------
-const BADGE_SIZE = 36;
-const BADGE_X = 244;
-const BADGE_Y = 600;
+// ---------- 徽章样式：DeckButtonController 同款 44×44 圆形徽章，位于 🎒 徽章左侧 50px ----------
+const BADGE_SIZE = 44;
+const BADGE_X = 264;
+const BADGE_Y = 606;
 const BADGE_BG = Theme.ui.badgeBg;
 const BADGE_RING = Theme.ui.gold;
-const BADGE_EMOJI = '📋';
-const BADGE_EMOJI_SIZE = 20;
+/** 徽章图标：写字板矢量图形（IconLib 染色，替代 emoji Label） */
+const BADGE_ICON = 'clipboard';
+const BADGE_ICON_SIZE = 24;
 /** 可领取红点（右上角小圆） */
 const DOT_COLOR = Theme.ui.redDot;
 const DOT_OFFSET_X = 11;
@@ -25,7 +29,8 @@ const DOT_POLL_INTERVAL = 2;
 
 /**
  * 📋 每日任务徽章：挂载在 Canvas/UILayer/DailyTaskBadge 节点上（ensureMounted 自举纯代码创建）。
- * - 36×36 圆形徽章钉在顶部 HUD 行（🎒 牌库徽章左侧 44px，Y=600 怪物走廊上方），轻点广播 SHOW_DAILY_TASKS；
+ * - 44×44 圆形徽章钉在顶部 HUD 第一行（🎒 背包徽章左侧，Y=606 怪物走廊上方），
+ *   轻点广播 SHOW_DAILY_TASKS；与 DeckButtonController 同一套 TAP_SLOP 轻点判定 + 弹窗互斥守卫；
  * - 右上角红点 = 存在可领取任务（hasClaimable，低频轮询 2s 刷新；领奖后 ≤2s 消失）。
  *
  * 注：Cocos Creator 规定每个脚本资产最多注册一个 Component（引擎 errorID 3615），
@@ -34,6 +39,10 @@ const DOT_POLL_INTERVAL = 2;
 @ccclass('DailyTaskBadge')
 export class DailyTaskBadge extends Component {
     private _dot: Node | null = null;
+    /** 手指按下位置（UI 坐标）：区分「轻点」与「从按钮处起始的瞄准拖拽」 */
+    private readonly _pressPos = new Vec2();
+    /** 弹窗互斥守卫：结算/奖励/商店/面板任一打开期间不响应徽章 */
+    private _modalOpen = false;
 
     /** 全局自举：幂等把本组件挂到 Canvas/UILayer/DailyTaskBadge（窄屏时随 🎒 徽章同步内收） */
     static ensureMounted(): void {
@@ -46,29 +55,77 @@ export class DailyTaskBadge extends Component {
             node = new Node('DailyTaskBadge');
             node.layer = uiLayer.layer;
             uiLayer.addChild(node);
-            // 水平钉位：优先 BADGE_X（🎒 徽章 290 左侧 44px）；窄屏按右缘钳制内收，与 🎒 徽章不重叠
+            // 水平钉位：优先 BADGE_X（🎒 徽章 314 左侧 50px）；窄屏按右缘钳制内收，与 🎒 徽章不重叠
             const halfW = (find('Canvas')?.getComponent(UITransform)?.width ?? 720) / 2;
-            node.setPosition(Math.min(BADGE_X, halfW - 70), BADGE_Y, 0);
+            node.setPosition(Math.min(BADGE_X, halfW - 76), BADGE_Y, 0);
         }
-        if (!node.getComponent(DailyTaskBadge)) {
+        // 热重载防御：脚本热更后 getComponent 按新类匹配不到旧实例，会反复 addComponent——
+        // 只保留首个实例、多余销毁（RelicBar 曾因同类问题堆出数十个重复组件）
+        const comps = node.getComponents(DailyTaskBadge);
+        for (let i = 1; i < comps.length; i++) {
+            comps[i].destroy();
+        }
+        if (comps.length === 0) {
             node.addComponent(DailyTaskBadge);
         }
     }
 
     protected onLoad(): void {
+        // 钉位安全化：热重载/旧数据可能把徽章摆回旧坐标，一律强制钉到第一行 HUD 位（与 🎒 同高对齐）
+        const halfW = (find('Canvas')?.getComponent(UITransform)?.width ?? 720) / 2;
+        this.node.setPosition(Math.min(BADGE_X, halfW - 76), BADGE_Y, 0);
         this.buildUI();
-        this.node.on(Node.EventType.TOUCH_END, this.onTap, this);
+        this.node.on(Node.EventType.TOUCH_START, this.onTouchStart, this);
+        this.node.on(Node.EventType.TOUCH_END, this.onTouchEnd, this);
+        this.node.on(Node.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
+        EventBus.on(GameEvents.UI_MODAL_CHANGED, this.onModalChanged, this);
         this.schedule(this.refreshDot, DOT_POLL_INTERVAL);
         this.refreshDot();
     }
 
     protected onDestroy(): void {
-        this.node.off(Node.EventType.TOUCH_END, this.onTap, this);
+        this.node.off(Node.EventType.TOUCH_START, this.onTouchStart, this);
+        this.node.off(Node.EventType.TOUCH_END, this.onTouchEnd, this);
+        this.node.off(Node.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
+        EventBus.off(GameEvents.UI_MODAL_CHANGED, this.onModalChanged, this);
         this.unschedule(this.refreshDot);
     }
 
-    private onTap(): void {
+    /** 按下记录起点：与 🎒 徽章同一套 TAP_SLOP 判定，瞄准拖拽起始不误开面板 */
+    private onTouchStart(event: EventTouch): void {
+        const pos = event.getUILocation();
+        this._pressPos.set(pos.x, pos.y);
+    }
+
+    /** 抬起：弹窗期间不响应；位移仍在轻点范围内才广播 SHOW_DAILY_TASKS */
+    private onTouchEnd(event: EventTouch): void {
+        const pos = event.getUILocation();
+        console.log(`[诊断] TaskBadge 触摸抬起 ui=(${pos.x.toFixed(0)},${pos.y.toFixed(0)}) modal=${this._modalOpen} node活动=${this.node.activeInHierarchy}`);
+        // 现实纠偏：事件镜像说有弹窗，但实际所有弹窗都已关闭 → 复位（自愈 missed-false 卡死）
+        if (this._modalOpen && !anyModalOpen()) {
+            console.warn('[诊断] TaskBadge 模态镜像卡 true，已按现实复位');
+            this._modalOpen = false;
+        }
+        if (this._modalOpen) {
+            return; // 弹窗打开期间：不响应徽章点击，避免叠层误开
+        }
+        if (Vec2.distance(this._pressPos, pos) > TAP_SLOP) {
+            return; // 位移过大：是从按钮处起始的瞄准拖拽，不当作点击
+        }
         EventBus.emit(GameEvents.SHOW_DAILY_TASKS);
+    }
+
+    /** 手指滑出节点（取消触摸）：不触发点击 */
+    private onTouchCancel(): void {}
+
+    /** UI_MODAL_CHANGED：结算/奖励/商店/面板开合时同步互斥守卫 */
+    private onModalChanged(open: boolean): void {
+        if (open) {
+            // [诊断] 谁在会话早期把 modal 置 true 又不置 false，导致徽章永久失联（2026-09-03 排查）
+            console.warn('[诊断] TaskBadge 收到 MODAL=true，调用栈：',
+                (new Error().stack ?? '').split('\n').slice(1, 5).join('\n'));
+        }
+        this._modalOpen = open === true;
     }
 
     /** 红点状态刷新：存在「已完成未领取」任务时点亮 */
@@ -78,7 +135,7 @@ export class DailyTaskBadge extends Component {
         }
     }
 
-    /** 纯代码构建徽章外观：半透明深暗色圆形底板 + 暗金细环 + 居中 📋 + 右上角红点（幂等重绘） */
+    /** 纯代码构建徽章外观：半透明深暗色圆形底板 + 暗金细环 + 居中矢量图标 + 右上角红点（幂等重绘） */
     private buildUI(): void {
         const ui = this.getComponent(UITransform) ?? this.addComponent(UITransform);
         ui.setContentSize(BADGE_SIZE, BADGE_SIZE);
@@ -93,19 +150,12 @@ export class DailyTaskBadge extends Component {
         g.circle(0, 0, r - 1);
         g.stroke();
 
-        let labelNode = this.node.getChildByName('Label');
-        if (!labelNode?.isValid) {
-            labelNode = new Node('Label');
-            labelNode.layer = this.node.layer;
-            this.node.addChild(labelNode);
-            labelNode.addComponent(UITransform).setContentSize(BADGE_SIZE, BADGE_SIZE);
-            const label = labelNode.addComponent(Label);
-            label.string = BADGE_EMOJI;
-            label.fontSize = BADGE_EMOJI_SIZE;
-            label.lineHeight = BADGE_EMOJI_SIZE + 2;
-            label.horizontalAlign = Label.HorizontalAlign.CENTER;
-            label.verticalAlign = Label.VerticalAlign.CENTER;
-        }
+        // 居中矢量写字板图标（幂等：mountIcon 同名子节点清空重绘；顺带清理历史 emoji Label）
+        this.node.children.filter((c) => c.name === 'Label').forEach((c) => c.destroy());
+        mountIcon(this.node, BADGE_ICON, BADGE_ICON_SIZE, Theme.white, 0, 0);
+        // 热重载防御：历史实例遗留的旧红点先清空（曾堆出 130 个叠成粉圆色块），保证红点恒为 1 个
+        this.node.children.filter((c) => c.name === 'ClaimDot').forEach((c) => c.destroy());
+        this._dot = null;
         if (!this._dot?.isValid) {
             const dot = new Node('ClaimDot');
             dot.layer = this.node.layer;
@@ -120,3 +170,4 @@ export class DailyTaskBadge extends Component {
         }
     }
 }
+

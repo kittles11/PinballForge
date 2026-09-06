@@ -1,10 +1,11 @@
 import {
     _decorator, Component, Node, Prefab, Graphics, Vec2, Vec3, Color,
-    input, Input, EventTouch, RigidBody2D, instantiate,
+    input, Input, EventTouch, RigidBody2D, instantiate, director,
     PhysicsSystem2D, CircleCollider2D,
 } from 'cc';
 import { DeckManager } from '../Core/DeckManager';
 import { EventBus, GameEvents } from '../Core/EventBus';
+import { anyModalOpen } from '../Core/ModalGate';
 import { OrbController } from '../Pinball/OrbController';
 import { PegComponent } from '../Pinball/PegComponent';
 import { OrbBalance } from '../Core/OrbBalance';
@@ -85,6 +86,40 @@ export class LauncherController extends Component {
         }
         EventBus.on(GameEvents.UI_MODAL_CHANGED, this.onUiModalChanged, this);
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
+        // 输入看门狗：全局输入监听理论上只在 onDisable/onGameOver 注销，但曾出现「新局输入全死、
+        // 无诊断日志」（引擎输入模块被此前的 Button 崩溃打断进坏状态/监听静默丢失）——每 2s
+        // 幂等重挂一次（off+on 同回调同 target），监听健在时是无感的，丢了就自愈。
+        this.schedule(this.inputWatchdog, 2);
+        // DOM 级逃生门（绕过引擎输入系统）：按 R 强制重开一局——输入系统整体坏死时唯一的自救手段
+        if (typeof window !== 'undefined' && !(window as any).__pfPanicKey) {
+            (window as any).__pfPanicKey = true;
+            window.addEventListener('keydown', (e: KeyboardEvent) => {
+                if (e.key === 'r' || e.key === 'R') {
+                    console.log('[诊断] 逃生键 R：强制重载场景');
+                    director.loadScene(director.getScene()?.name || 'MainScene');
+                }
+            });
+        }
+    }
+
+    /** 看门狗心跳（全时运行）：先做模态现实同步（镜像卡 true 但弹窗实际全关 → 复位），再幂等重挂全局输入 */
+    private inputWatchdog(): void {
+        if (this._modalOpen && !anyModalOpen()) {
+            console.warn('[诊断] Launcher 模态镜像卡 true，已按现实复位并恢复输入');
+            this._modalOpen = false;
+            this.registerInput();
+        }
+        if (this._modalOpen || !this._inputRegistered) {
+            return;
+        }
+        input.off(Input.EventType.TOUCH_START, this.onTouchStart, this);
+        input.off(Input.EventType.TOUCH_MOVE, this.onTouchMove, this);
+        input.off(Input.EventType.TOUCH_END, this.onTouchEnd, this);
+        input.off(Input.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
+        input.on(Input.EventType.TOUCH_START, this.onTouchStart, this);
+        input.on(Input.EventType.TOUCH_MOVE, this.onTouchMove, this);
+        input.on(Input.EventType.TOUCH_END, this.onTouchEnd, this);
+        input.on(Input.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
     }
 
     protected onEnable(): void {
@@ -107,6 +142,10 @@ export class LauncherController extends Component {
     }
 
     private onUiModalChanged(open: boolean): void {
+        if (open) {
+            console.warn('[诊断] Launcher 收到 MODAL=true，调用栈：',
+                (new Error().stack ?? '').split('\n').slice(1, 5).join('\n'));
+        }
         this._modalOpen = open;
         if (open) {
             this.unregisterInput();
@@ -143,6 +182,8 @@ export class LauncherController extends Component {
     }
 
     private onTouchStart(event: EventTouch): void {
+        const loc = event.getUILocation();
+        console.log(`[诊断] 全局触点按下 ui=(${loc.x.toFixed(0)},${loc.y.toFixed(0)}) modal=${this._modalOpen}`);
         if (this._activeTouchId !== null || this._modalOpen) return;
         this._activeTouchId = event.getID();
         this.refreshPegSnapshot();
@@ -319,6 +360,9 @@ export class LauncherController extends Component {
     }
 
     private launchOrb(): void {
+        // 🎯 发射免费（2026-09-03 回滚发射经济）：每发扣 3 金曾造成「0 金拒发 → 打不到金币槽 →
+        // 永远 0 金」的死锁（发射是核心动作，不该被货币卡脖子；补贴 9 金只兜 3 发根本不够）。
+        // 金币回归纯商店货币：收入 = 击杀掉落 + 金币槽 +20 + 波次补贴 9。
         // DeckManager 为纯类型化卡组（不持有 Prefab），发射统一使用本组件配置的 orbPrefab
         // （原代码引用了不存在的 DeckManager.baseOrbPrefab，运行时恒走 fallback，此处清理为直接取值）
         const prefab = this.orbPrefab;

@@ -1,6 +1,6 @@
 import {
     _decorator, Component, Node, Vec3, Color, Graphics, UITransform, Layers,
-    MotionStreak, Sprite, tween, Tween, find,
+    MotionStreak, Sprite, gfx, tween, Tween, find,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { EnemyManager } from './EnemyManager';
@@ -149,11 +149,12 @@ export class TurretController extends Component {
                     // ⚒ meta「攻城炮台」：炮塔子弹伤害按等级加成（siegeBonus = Lv × 20%）
                     const dmg = Math.round(data.damage * (1 + MetaManager.getSiegeBonus()));
                     target.takeDamage(dmg, data.orbType, false, data.funnelType ?? null);
-                    // 🌳 吸血球：命中后按倍率治疗城堡（续航，不改伤害分配；命中才回血，语义正确）
+                    // 🌳 吸血球：命中后按倍率治疗城堡（续航，不改伤害分配；命中才回血，语义正确）。
+                    //   难度方案B：单发回血封顶 leechHitHealCap，且豁免城堡单局治疗阀门（上限由封顶承担）
                     if (data.orbType === OrbType.Leech) {
-                        const heal = Math.round(dmg * OrbBalance.leechHealRatio);
+                        const heal = Math.min(Math.round(dmg * OrbBalance.leechHealRatio), OrbBalance.leechHitHealCap);
                         if (heal > 0) {
-                            CastleController.instance?.heal(heal);
+                            CastleController.instance?.heal(heal, true);
                             // 回血飘字：翠绿「+N ❤」从命中敌人处升起（吸血反馈可视化）
                             FloatingTextManager.instance?.showText(
                                 `+${heal} ❤`, target.node.worldPosition, Theme.orb.leech, false,
@@ -219,23 +220,29 @@ export class TurretController extends Component {
             sp.sizeMode = Sprite.SizeMode.CUSTOM;
             sp.trim = false;
             sp.color = color;
-            const mat = RuntimeTex.additiveMaterial();
-            if (mat) {
-                sp.customMaterial = mat;
-            }
+            // ★ 加法混合（2026-09-05）：走 Sprite 混合因子（引擎原生路径）；自建 customMaterial
+            //   的 blendState 覆盖会整体替换 BlendTarget，实测渲染成不透明方块。
+            sp.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
+            sp.dstBlendFactor = gfx.BlendFactor.ONE;
             n.addChild(glow);
         }
 
         // ★ 弹道拖尾：短淡出 MotionStreak（0.12s 飞行中拉出光迹，替代原瞬移实心圆点）
+        //   挂到子节点：MotionStreak 与 Graphics 同为 renderable 组件，同节点互斥
+        //   （"Can't add renderable component" 即因此产生），子节点随父节点移动，拖尾跟随正确。
         const streakTex = RuntimeTex.streakTexture();
         if (streakTex) {
-            const streak = n.addComponent(MotionStreak);
+            const trail = new Node('BulletTrail');
+            trail.layer = n.layer;
+            trail.addComponent(UITransform);
+            const streak = trail.addComponent(MotionStreak);
             streak.texture = streakTex;
             streak.fadeTime = 0.1;
             streak.minSeg = 3;
             streak.stroke = radius * 1.2;
             streak.fastMode = false;
             streak.color = color;
+            n.addChild(trail);
         }
         return n;
     }
