@@ -9,6 +9,8 @@
  * 用法（各弹窗 buildUI 内替换原 roundRect+fill 两行）：
  *   const g = node.addComponent(Graphics);
  *   UiKit.raisedButton(g, BTN_W, BTN_H, Theme.ui.blueActive);
+ *   // 按压态重绘（配合整体下沉，与静止态同一函数保证形状一致）：
+ *   UiKit.raisedButton(g, BTN_W, BTN_H, Theme.ui.blueActive, 14, true);
  */
 import { Graphics, Node, Tween, tween, UIOpacity, UITransform } from 'cc';
 import type { Color } from 'cc';
@@ -31,17 +33,24 @@ const HIGHLIGHT_ALPHA = 90;
  * @param w/h    尺寸（节点锚点居中坐标系）
  * @param body   本体色（ArtTheme 语义色）
  * @param radius 圆角半径
+ * @param pressed 按压态：阴影塌缩贴地、暗边变薄、面部减光——与静止态逐层同形，
+ *                仅几何/明度变化，配合节点整体下沉即「按进去」的浮雕反馈
  */
-export function raisedButton(g: Graphics, w: number, h: number, body: Color, radius: number = DEFAULT_RADIUS): void {
+export function raisedButton(
+    g: Graphics, w: number, h: number, body: Color, radius: number = DEFAULT_RADIUS, pressed: boolean = false,
+): void {
     if (!g?.isValid) {
         return;
     }
     const left = -w / 2;
     const top = -h / 2;
+    const shadowOffset = pressed ? 0 : SHADOW_OFFSET; // 按下：影子被压在按钮底下，不再外露
+    const edge = pressed ? BASE_EDGE / 2 : BASE_EDGE; // 按下：厚度减半（贴地）
+    const dim = pressed ? -0.16 : 0; // 按下：面部整体减光，与高光线收窄合成「受压变实」
 
     // ① 投影：整体下坠 offset 的深色同形圆角矩形
     g.fillColor = shadeColor(body, -1, SHADOW_ALPHA);
-    g.roundRect(left, top + SHADOW_OFFSET, w, h, radius);
+    g.roundRect(left, top + shadowOffset, w, h, radius);
     g.fill();
 
     // ② 底座暗边：本体位置向下露出 BASE_EDGE 厚度的深色边（厚度感）
@@ -49,14 +58,14 @@ export function raisedButton(g: Graphics, w: number, h: number, body: Color, rad
     g.roundRect(left, top, w, h, radius);
     g.fill();
 
-    // ③ 本体：上移 BASE_EDGE 的主体面
-    g.fillColor = body;
-    g.roundRect(left, top, w, h - BASE_EDGE, radius);
+    // ③ 本体：上移 BASE_EDGE 的主体面（按压态随厚度同步减半）
+    g.fillColor = shadeColor(body, dim);
+    g.roundRect(left, top, w, h - edge, radius);
     g.fill();
 
-    // ④ 顶部高光线：一条贴顶的浅色圆角横带（受光面）
-    g.fillColor = shadeColor(body, 0.35, HIGHLIGHT_ALPHA);
-    g.roundRect(left + radius * 0.4, top + 2, w - radius * 0.8, 5, 2.5);
+    // ④ 顶部高光线：一条贴顶的浅色圆角横带（受光面；按压态收窄变淡）
+    g.fillColor = shadeColor(body, 0.35, pressed ? HIGHLIGHT_ALPHA / 3 : HIGHLIGHT_ALPHA);
+    g.roundRect(left + radius * 0.4, top + 2, w - radius * 0.8, pressed ? 3 : 5, 2.5);
     g.fill();
 }
 

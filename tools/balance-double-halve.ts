@@ -72,6 +72,8 @@ interface AnchorResult {
     margin: number;     // marchT - clearT：正=清在撞线前，负=必然漏怪攻城
     castleLeak: number; // 本波攻城损失 = 敌数 × 当前章攻城伤害(getBaseAttackDamage) × max(0, -margin)
     requiredDps: number; // 撞线前全灭所需 DPS = waveHp / marchT
+    margin3x: number;   // ×3 构筑口径余量（2026-09-07 校准线：中期成熟档 ≈ 3 倍输出）
+    leak3x: number;     // ×3 构筑口径本波攻城损失
 }
 
 interface Metrics {
@@ -79,6 +81,7 @@ interface Metrics {
     dmgPerShot: number;
     goldPerLevel: number;
     pressure: number;   // 全锚点攻城损失合计 / 城堡血量（≥1 即基线牌库扛不过该章）
+    pressure3x: number; // ×3 构筑口径同式（校准参考线，目标带 0.6~0.9 = 紧张但不崩）
     anchors: AnchorResult[];
 }
 
@@ -113,13 +116,17 @@ function simulate(p: Params): Metrics {
         const marchT = p.marchDistance / (def.speed * p.enemySpeedScale);
         const margin = marchT - clearT;
         const castleLeak = Math.max(0, -margin) * def.count * LevelManager.getBaseAttackDamage();
-        anchors.push({ name, waveHp, clearT, marchT, margin, castleLeak, requiredDps: waveHp / marchT });
+        // ×3 构筑口径（2026-09-07 校准线）：中期成熟档（卡/遗物/meta ≈ 3 倍输出）下的余量与漏伤
+        const margin3x = marchT - waveHp / (dps * 3);
+        const leak3x = Math.max(0, -margin3x) * def.count * LevelManager.getBaseAttackDamage();
+        anchors.push({ name, waveHp, clearT, marchT, margin, castleLeak, requiredDps: waveHp / marchT, margin3x, leak3x });
     }
     const totalLeak = anchors.reduce((s, a) => s + a.castleLeak, 0);
     // 每关金币：3 波总时长 / 出手机隔 × 每手期望金币（普通关 ≈ 教学锚 ×8 粗估）
     const levelDuration = anchors[0].clearT * 8;
     const goldPerLevel = (levelDuration / p.shotInterval) * goldPerShot;
-    return { dps, dmgPerShot, goldPerLevel, pressure: totalLeak / p.castleHp, anchors };
+    const totalLeak3x = anchors.reduce((s, a) => s + a.leak3x, 0);
+    return { dps, dmgPerShot, goldPerLevel, pressure: totalLeak / p.castleHp, pressure3x: totalLeak3x / p.castleHp, anchors };
 }
 
 // ───────────────── 加倍/减半扫描 ─────────────────
@@ -240,9 +247,9 @@ const fmtT = (t: number): string => (isFinite(t) ? `${t.toFixed(0)}s` : '无解'
 
 // ───────────────── 输出 ─────────────────
 const anchorTable = [
-    '| 锚点波次 | 波总血量 | 全灭耗时 | 撞线耗时 | 余量(+安全/−漏怪) | 攻城损失 | 撞线前全灭所需DPS | 基线DPS缺口 |',
-    '|---|---|---|---|---|---|---|---|',
-    ...base.anchors.map((a) => `| ${a.name} | ${Math.round(a.waveHp)} | ${a.clearT.toFixed(1)}s | ${a.marchT.toFixed(1)}s | ${a.margin >= 0 ? '+' : ''}${a.margin.toFixed(1)}s | ${Math.round(a.castleLeak)} | ${Math.round(a.requiredDps)} | ×${(a.requiredDps / base.dps).toFixed(1)} |`),
+    '| 锚点波次 | 波总血量 | 全灭耗时 | 撞线耗时 | 余量(+安全/−漏怪) | 攻城损失 | 撞线前全灭所需DPS | 基线DPS缺口 | ×3构筑余量 | ×3构筑漏伤 |',
+    '|---|---|---|---|---|---|---|---|---|---|',
+    ...base.anchors.map((a) => `| ${a.name} | ${Math.round(a.waveHp)} | ${a.clearT.toFixed(1)}s | ${a.marchT.toFixed(1)}s | ${a.margin >= 0 ? '+' : ''}${a.margin.toFixed(1)}s | ${Math.round(a.castleLeak)} | ${Math.round(a.requiredDps)} | ×${(a.requiredDps / base.dps).toFixed(1)} | ${a.margin3x >= 0 ? '+' : ''}${a.margin3x.toFixed(1)}s | ${Math.round(a.leak3x)} |`),
 ].join('\n');
 
 const sensTable = [
@@ -276,7 +283,8 @@ const report = `# 数值敏感性报告（加倍/减半法）
 - 等效 DPS：**${Math.round(base.dps)}**
 - 每关期望金币：**${Math.round(base.goldPerLevel)}**（对照：删卡 80+25 阶梯 / 买球 110 / 遗物 130~220）
 - 基线压力（漏伤/城堡HP）：**${base.pressure.toFixed(1)}**
-- 难度曲线（方案A/B 已接入）：敌人 HP = 线性基线 × 1.045^(章-1)；兵力 3/4/1 → 封顶 6/8/3（每 10/8/12 章 +1，Boss 波恒 1）；攻城伤害 10 + 2.5×(章-1)；移速斜率 1.8/章、封顶 150（50 章内不触顶）。
+- ×3 构筑口径压力：**${base.pressure3x.toFixed(1)}**（校准参考线：中期成熟档漏伤比；10-10 Boss 锚点目标带 0.6~0.9）
+- 难度曲线（方案A/B 已接入）：敌人 HP = 线性基线 × 1.030^(章-1)（2026-09-07 校准自 1.045：×3 构筑口径 10-10 Boss 压回 0.6~0.9 目标带）；兵力 3/4/1 → 封顶 6/8/3（每 10/8/12 章 +1，Boss 波恒 1）；攻城伤害 10 + 2.5×(章-1)；移速斜率 1.8/章、封顶 150（50 章内不触顶）。
 
 ## 锚点波次（基线牌库 = 零成长）
 
@@ -312,7 +320,7 @@ ${bossTable}
 **判读**：
 - 基线牌库（零成长）在全部 Boss 章「撞线后耗城」——与锚点表「成长承重墙」结论一致，Boss 行为没有改变这一点，只是改变**需要的构筑方向**（C 考节奏、B 考 AoE、A 考漏斗）。
 - 应对 vs 无视的击杀耗时差 = 机制的真实教学强度：坚盾章 ×3 构筑下 ${bulwarkRows.length ? `${fmtT(bulwarkRows[0].killT3x)} → ${fmtT(bulwarkRows[0].killT3xIgnore)}` : '—'}（约 +${bulwarkRows.length && isFinite(bulwarkRows[0].killT3x) && isFinite(bulwarkRows[0].killT3xIgnore) ? Math.round((bulwarkRows[0].killT3xIgnore / bulwarkRows[0].killT3x - 1) * 100) : 0}%），软惩罚但不可忽略——符合"不做不可赢硬检查"红线。
-- 30~90s 目标带命中 ${bandHits.length}/${bossRows.length} 章（基线口径）；偏离主因是血量复合膨胀（线性基线 × 1.045^(章-1)，难度方案A）而非行为系数——行为等效血量在 ×1.0~×1.5 区间，属可控设计余量。
+- 30~90s 目标带命中 ${bandHits.length}/${bossRows.length} 章（基线口径）；偏离主因是血量复合膨胀（线性基线 × 1.030^(章-1)，难度方案A，2026-09-07 校准自 1.045）而非行为系数——行为等效血量在 ×1.0~×1.5 区间，属可控设计余量。
 
 ## 使用建议
 
@@ -324,10 +332,10 @@ mkdirSync(resolve('docs'), { recursive: true });
 writeFileSync(resolve('docs', 'BALANCE_SENSITIVITY.md'), report, 'utf8');
 
 console.log('=== 基线 ===');
-console.log(`每发伤害 ${Math.round(base.dmgPerShot)} | DPS ${Math.round(base.dps)} | 每关金币 ${Math.round(base.goldPerLevel)} | 压力 ${base.pressure.toFixed(1)}`);
+console.log(`每发伤害 ${Math.round(base.dmgPerShot)} | DPS ${Math.round(base.dps)} | 每关金币 ${Math.round(base.goldPerLevel)} | 压力 ${base.pressure.toFixed(1)} | ×3构筑压力 ${base.pressure3x.toFixed(1)}`);
 console.log('\n=== 锚点 ===');
 for (const a of base.anchors) {
-    console.log(`${a.name}: HP ${Math.round(a.waveHp)} 全灭 ${a.clearT.toFixed(1)}s 撞线 ${a.marchT.toFixed(1)}s 余量 ${a.margin.toFixed(1)}s 漏伤 ${Math.round(a.castleLeak)} 需DPS ${Math.round(a.requiredDps)}`);
+    console.log(`${a.name}: HP ${Math.round(a.waveHp)} 全灭 ${a.clearT.toFixed(1)}s 撞线 ${a.marchT.toFixed(1)}s 余量 ${a.margin.toFixed(1)}s 漏伤 ${Math.round(a.castleLeak)} 需DPS ${Math.round(a.requiredDps)} | ×3余量 ${a.margin3x.toFixed(1)}s ×3漏伤 ${Math.round(a.leak3x)}`);
 }
 console.log('\n=== 敏感性（按摆幅降序）===');
 for (const r of rows) {

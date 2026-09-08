@@ -62,6 +62,12 @@ const C_MAGMA = 0xFF2079;        // 熔核洋红（第 6 球种：Meta 球种工
 const C_LEECH = 0x36E77A;        // 吸血翠绿（第 7 球种：Meta 球种工坊 Lv5 封顶解锁）
 const C_CANNON = 0xFF3333;       // 聚能（重炮）红
 const C_PANEL = 0x1E2438;        // UI 面板靛蓝
+// ★ 球种专用色（2026-09-07 调色需求：闪电=金黄 / 霜冻=冰蓝 / 熔岩=红）——
+//   绝不复用 C_ICE/C_GOLD/C_RED 共享 token：C_ICE 同时被敌人冻结特效与漏斗色引用，
+//   直接改共享常量会连带改坏冻结特效与漏斗语言（历史教训见 ArtTheme 文件头「同色系漂移」）
+const C_GOLDEN = 0xFFD700;       // 闪电金黄（球种专用，区别于 UI 主题金 #FFD878）
+const C_ICEBLUE = 0x4FC3F7;      // 霜冻冰蓝（球种专用，饱和冰蓝，原 #E0F7FA 在浅色底上不可读）
+const C_ORB_RED = 0xFF3232;      // 熔岩红（球种专用正红；C_RED #FF4646 偏粉，弹珠本体要求纯正红）
 
 /** 语义色板：按 bg / machine / ui / orb / peg / enemy / funnel / wing / fx 分族 */
 export const Theme = {
@@ -109,9 +115,9 @@ export const Theme = {
     /** 弹珠：7 球种核心色 + 受击反馈 */
     orb: {
         normal: hex(C_WHITE),
-        lightning: hex(C_ICE),
-        lava: hex(C_LAVA),
-        frost: hex(C_FROST),
+        lightning: hex(C_GOLDEN),
+        lava: hex(C_ORB_RED),
+        frost: hex(C_ICEBLUE),
         plasma: hex(C_PLASMA),
         magma: hex(C_MAGMA),
         leech: hex(C_LEECH),
@@ -181,10 +187,10 @@ export const Theme = {
 // ---------- 球种 / 漏斗 颜色映射（数字键，杜绝模块加载期循环引用未定义） ----------
 
 const ORB_TRAIL_COLORS: Record<number, Color> = {
-    0: hex(C_WHITE),       // 普通：银白
-    1: hex(C_ICE),         // 雷电：青蓝电光
-    2: hex(C_LAVA),        // 熔岩：炽热橙红
-    3: hex(C_FROST),       // 霜冻：雪白微蓝
+    0: hex(C_WHITE),       // 普通：纯白
+    1: hex(C_GOLDEN),      // 雷电：金黄电光
+    2: hex(C_ORB_RED),     // 熔岩：正红
+    3: hex(C_ICEBLUE),     // 霜冻：冰蓝
     4: hex(C_PLASMA),      // 等离子：等离紫
     5: hex(C_MAGMA),       // 熔核：洋红
     6: hex(C_LEECH),       // 吸血：翠绿
@@ -192,9 +198,9 @@ const ORB_TRAIL_COLORS: Record<number, Color> = {
 
 const ORB_AIM_COLORS: Record<number, Color> = {
     0: hex(C_WHITE, 220),
-    1: hex(C_ICE, 240),
-    2: hex(C_LAVA, 240),
-    3: hex(C_FROST, 240),
+    1: hex(C_GOLDEN, 240),
+    2: hex(C_ORB_RED, 240),
+    3: hex(C_ICEBLUE, 240),
     4: hex(C_PLASMA, 240),
     5: hex(C_MAGMA, 240),
     6: hex(C_LEECH, 240),

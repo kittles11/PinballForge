@@ -1,23 +1,24 @@
 # PinballForge 运营 × 美术完善计划
 
-> 版本：v1.0（2026-08-31）
-> 视角：游戏运营 + 美术。技术架构与代码级问题见根目录 `PROJECT_ANALYSIS.md`（8/27 只读分析），本文不重复。
+> 版本：v1.1（2026-09-07 再同步）
+> 视角：游戏运营 + 美术。技术架构与代码级问题见根目录 `PROJECT_ANALYSIS.md`（8/27 只读分析 + 09-07 校准勘误），本文不重复。
 > 方法论：《游戏设计的100个原理》体系（核心循环 / 心流 / 80-20 / 约束三角 / 主题一致性 / 视觉引导 / Fitts / Hick / 奖惩系统 / 动态难度）。
 > 维护方式：每完成一项在对应表格打勾并注明日期；里程碑验收标准不允许口头放宽。
+> **📌 最后校准：2026-09-07**——§1 现状表已按当日自检刷新；历史正文若与 `tools/selfchecks/` 冲突，以自检为准。
 
 ---
 
-## 1. 现状盘点（2026-08-31）
+## 1. 现状盘点（2026-09-07 刷新）
 
-**一句话**：核心循环成立（瞄准→撞钉积能→漏斗开火→清波→三选一→商店→Meta 养成），是"可玩原型"；表现层与运营层均为空白。
+**一句话**：核心循环成立且防御纵深扎实（35 个自检全绿护城河），表现层与运营层已从空白补到可用；当前主战场是协同深度（球×钉×槽×卡化学反应）与数值后期曲线。
 
 | 维度 | 已有 | 缺口 |
 |---|---|---|
-| 玩法 | 7 球种、3 漏斗、4 钉种、5 敌种、16 卡（含 3 机制应答卡）+ 6 跨局解锁卡、5 遗物、Boss 行为+精英词缀、5 钉板版型（2 解锁）、50 章×10 关、Meta 解锁树（12 轨三条根深度链）死亡补偿 | 动态难度、每日任务、长线目标 |
-| 视觉 | CameraShake / FloatingText / Punch 动画 | 全部 emoji+色块占位；无特效、无场景美术 |
-| 音频 | 撞钉直播池 + Web Audio 合成特效 | 音效 2 个文件；无 BGM |
-| 运营 | localStorage 进度+Meta 存档 | 零埋点、无变现点位、无留存钩子 |
-| 上线阻塞 | ~~音频打包路径~~ **已修复**（resources.load 优先 + 旧路径兜底 + 合成降级三层保障，`assets/resources/audio/ding.mp3` 已就位） | 平台 SDK、隐私合规 |
+| 玩法 | 7 球种（冰球已闭环：易伤 0.25 + 商店上架）、3 漏斗、4 钉种+镀金钉、5 敌种+精英词缀、16+6 卡、5 遗物、Boss 三周期、弹珠×敌人直伤、碎冰/寒霜导热/镀金赏金协同、50 章、Meta 树、DDA | 球×钉×槽×卡更深层协同（组合包第二批）、后期曲线实机校准 |
+| 视觉 | 全矢量 ArtTheme + IconLib 25 图标 + 9 张程序化贴图、FxManager 分层特效、MotionStreak 拖尾、HitStop/震屏 | 敌人差异仍靠颜色+缩放，无帧动画 |
+| 音频 | 撞钉直播池音高爬升 + Web Audio 合成特效 + 程序化 BGM（Boss 打击层/胜负 stinger/模态 ducking）+ 击杀反馈音 | 音效文件仍少（合成主导是刻意选择） |
+| 运营 | Analytics 埋点壳、每日任务、签到、每日挑战、激励视频点位、AdService | 埋点后端上报（缓冲壳够用到软启动前） |
+| 上线阻塞 | ~~音频打包路径~~ 已修复；~~商店深度~~ 二期已上（稀有位+刷新）；~~多分辨率验证~~ 静态审计+自检已上（docs/RESOLUTION_AUDIT.md） | 平台 SDK、隐私合规、多分辨率真机抽验（软启动前） |
 
 ## 2. 产品定位（用户中心设计）
 
@@ -234,4 +235,5 @@
 | 2026-09-02 | 第 6 球种 + 12 轨（球种工坊多解锁扩展） | **熔核球**（`OrbType.Magma=5`）：走**通用累积路径**（不碰熔岩溅射分支，零回归），身份=超重重压 + 每钉 +75（>熔岩 60）+ 剥坚盾 3 层（`bulwarkPeelMagma`），经**球种工坊 Lv3** 解锁——验证 orbLab 从单解锁（Lv1 等离子）扩到多档位（Lv1+Lv3）。全反馈通道接线同 Plasma。**两数值轨**：商道 bargain（gold←Lv2，商店价 -8%/级封顶 -40%，`ShopDialog.finalPrice` 统一扣费+显示+可付）、攻城炮台 siege（castle←Lv4，炮塔子弹 +20%/级，`TurretController` 命中乘 `(1+getSiegeBonus)`）。锻造区改 **1/2/3 列自适应**（≤4/≤10/>10），三列窄行走紧凑模式（省效果文案）。`selfcheck-meta-cards` ⑦ 段扩至双球种全分支 + bargain/siege 行为真跑；boss-behaviors/funnel-orb 透传断言放宽首参。全套 23/23 绿 |
 | 2026-09-02 | 第 7 球种 + 解锁总览预览（方向 2/3 续） | **吸血球**（`OrbType.Leech=6`）：走**普通物理**（非重球，不碰延迟密度分支），身份=**命中后治疗城堡**（伤害 25% 转要塞生命，`TurretController` 单一投递点命中后 `CastleController.heal`，不改伤害分配→零回归），经**球种工坊 Lv5** 封顶解锁——orbLab 成三档功能互补（Lv1 等离子反盾 / Lv3 熔核反 Boss / Lv5 吸血续航）。回血倍率 `OrbBalance.leechHealRatio` 单一来源。**收尾③**：锻造区加 **📖 解锁总览切换**——复用现有行节点，预览模式行显「名称·效果/describe」（含 🔒 前置），购买模式显 Lv+价格，预览态点击不扣费（`_forgePreview` 守卫 `onForgeRowClick`）；解决三列紧凑模式看不到效果文案的问题，零布局改动。`selfcheck-meta-cards` ⑦ 段扩至三球种全分支 + Leech 回血钩子 + 非重球不变量 + orbLab Lv5 describe；meta-reward 补预览切换断言 + applyMetaBonus 七球种全覆盖；deck-view 6→7。全套 23/23 绿 |
 | 2026-09-02 | 禁忌三档 + 吸血飘字（方向 2/3 续） | **禁忌卡包 Lv5 封顶卡「不朽要塞」**（`forb_immortal`，`MaxHp` +80）：与奇点（进攻 BuffHeavy）· 猎神（反精英 AntiElite）构成**攻/杀/守三轴**，复用既有 `MaxHp` 处理器（`increaseMaxHp`）零新结算钩子——验证 forbiddenPack 从双档扩到三档（与 orbLab 三档对称）。describe 补 Lv5→奇点+猎神+不朽。**收尾③**：吸血球回血加**翠绿飘字**「+N ❤」（`TurretController` 命中后 `FloatingTextManager.showText`，复用结算大字管线）。`selfcheck-meta-cards` ⑥ 段跨局卡 5→6 + forbiddenPack Lv5 describe 三档校验 + Leech 飘字断言。全套 23/23 绿，import 边 167→168 无循环 |
+| 2026-09-07 | 方案B「钉板决策深化」三机制落地 | ① **边缘风险带**：每波最宽行最左/最右钉（±0.5px 容差）标记边缘高能（琥珀描边圈），`PegComponent.multiplier` 乘 `EDGE_ENERGY_MULT=1.5`，与镀金叠置时赏金 ×2（`EDGE_GILD_BOUNTY_MULT`）——「冒掉槽风险换双倍金」显式赌注；② **过热钉**：每波对普通钉 Fisher-Yates 掷 3 颗（金描边圈），该次撞钉能量 ×3（`OrbController` 撞前捕获 `peg.isOverheated`，`onHit` 受击即熄）+「过热 ×3」跳字；③ **连击热流**：同次飞行第 N 撞伤害 ×(1+0.1(N-1)) 封顶 ×2（`comboHeatMult`），乘区与漏斗同层在入槽开火兑现（不进 `accumulatedDamage`，伤害快照语义不变）；「连击 ×N」里程碑跳字（4/8/11）+ `OrbView.setHeatTint` 本体色向炽橙渐变（`initOrbType` 复位）。雷球 hitCount 语义核实无漂移（连击追发门仍计撞钉数）。自检 `selfcheck-card-effects` ④段 + `selfcheck-peg-soft-reset` 版型轮换/过热形状锁定，全套 38 脚本全绿 |
 

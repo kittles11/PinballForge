@@ -1,41 +1,44 @@
+/**
+ * 发射器（2026-09-07 随机角度改版）：固定在顶部中央的弹射座，出射角【每次发射前重新随机滚定】。
+ *
+ * 设计要点（用户拍板）：
+ *  - 角度随机发生在 launchOrb 内部——每发独立均匀分布于 [-165°, -15°]（恒向上扇区，
+ *    左右各留 15° 贴墙死区），连点冷却内的连按同样每发一随机，不是开局滚一次定死；
+ *  - 触摸拖拽瞄准 / AimPreview 弹道预测线已整体移除：方向不可预知，预测线会构成误导；
+ *  - 底部「发 射」按钮为唯一发射入口（ensureLaunchButton 纯代码自举，幂等，屏底漏斗下方），
+ *    弹窗互斥（UI_MODAL_CHANGED / GAME_OVER + 现实同步）与连点冷却沿用原发射节流；
+ *  - 按压手感（attachPressFx）：按下节点下沉 3px + pressed 态重绘（影子塌缩 / 暗边减半 /
+ *    面部减光），松手 backOut 弹回——与 UiKit 浮雕语言配套的「按得进去」反馈；
+ *  - DOM 级 R 键逃生门保留（输入系统整体坏死时强制重载场景的唯一自救手段）。
+ */
 import {
-    _decorator, Component, Node, Prefab, Graphics, Vec2, Vec3, Color,
-    input, Input, EventTouch, RigidBody2D, instantiate, director,
-    PhysicsSystem2D, CircleCollider2D,
+    _decorator, Component, Node, Prefab, Graphics, Vec2, Vec3, UITransform,
+    Button, Label, instantiate, director, RigidBody2D, Color, Tween, tween,
 } from 'cc';
 import { DeckManager } from '../Core/DeckManager';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { anyModalOpen } from '../Core/ModalGate';
 import { OrbController } from '../Pinball/OrbController';
-import { PegComponent } from '../Pinball/PegComponent';
 import { OrbBalance } from '../Core/OrbBalance';
-import { simulateAimPreview, PreviewPeg } from '../Core/AimPreview';
 import { OrbType } from '../Core/DataModels';
-import { cloneColor, orbAimColor } from '../Core/ArtTheme';
+import { Theme } from '../Core/ArtTheme';
+import { raisedButton } from '../Core/UiKit';
 
 const { ccclass, property } = _decorator;
 
-/** 手指距发射点小于该值视为无效瞄准（不发射） */
-const MIN_AIM_LENGTH = 15;
-/** 发射方向允许的角度范围（度）：-165°（左下方）~ -15°（右下方） */
-const MIN_LAUNCH_ANGLE = -165 * Math.PI / 180;
-const MAX_LAUNCH_ANGLE = -15 * Math.PI / 180;
-
-/** 弹珠半径（与钉子半径求和判定预测线相交；与 orbPrefab 碰撞体一致） */
-const ORB_RADIUS = 16;
-/** 预测线积分步长（半帧）：弹珠实际初速 ~2400px/s，粗步长会把钉子跳过去 */
-const PREVIEW_DT = 1 / 120;
-/** 预测线点列间距（px）：沿弧长均匀撒点 */
-const PREVIEW_DOT_SPACING = 26;
-/** 预测点半径 */
-const PREVIEW_DOT_R = 3.5;
-/** 场地左右半宽近似值（物理墙贴设计分辨率 720 边缘，留弹珠半径余量） */
-const FIELD_HALF_W = 352;
-/** 底部截断线：漏斗接收区上沿（y 低于此即进入漏斗区，预测到此为止） */
-const FUNNEL_Y = -340;
+/** 发射方向允许的角度范围（度）：-165°（左上偏左）~ -15°（右上偏右），恒向上扇区 */
+const LAUNCH_ANGLE_MIN_DEG = -165;
+const LAUNCH_ANGLE_MAX_DEG = -15;
+/** 「发 射」按钮尺寸 / 位置（UILayer 局部坐标，屏底漏斗下方，锁定 720×1280 画布） */
+const LAUNCH_BTN_W = 150;
+const LAUNCH_BTN_H = 64;
+const LAUNCH_BTN_POS_Y = -545;
+/** 按压下沉量（px）：与 UiKit 暗边厚度同量级，压满再回弹才有「真按进去」的实体感 */
+const LAUNCH_BTN_PRESS_DIP_Y = 3;
 
 /**
- * 发射器：触摸拖拽瞄准 + 松手发射弹珠。
+ * 发射器：随机角度 + 按钮发射。orbPrefab / launcherNode / launchSpeed / launchCooldown
+ * 沿用场景既有接线；trajectoryGraphics / previewSpeedScale / previewTime 随预测线一并退役。
  */
 @ccclass('LauncherController')
 export class LauncherController extends Component {
@@ -45,40 +48,21 @@ export class LauncherController extends Component {
     @property({ type: Node })
     launcherNode: Node | null = null;
 
-    @property({ type: Node })
-    trajectoryGraphics: Node | null = null;
-
     @property
     launchSpeed = 1200;
 
-    /** 发射冷却（秒） */
+    /** 发射冷却（秒）：「发 射」按钮连点节流（原拖拽松手节流平移到按钮） */
     @property
     launchCooldown = 0.25;
 
-    /**
-     * 预测线初速倍率。fireOrb 实际是 linearVelocity 赋值 + 同值 impulse 的双重叠加
-     * （引擎源码 applyLinearImpulseToCenter 零换算直传 Box2D，Δv=v）→ 理论初速 = 2×launchSpeed。
-     * ponytail: 实机校准口——若预测线与真实弹道系统性偏短/偏长，微调此值（而非改发射逻辑）。
-     */
-    @property
-    previewSpeedScale = 2;
-
-    /** 预测线模拟总时长（秒）：决定预测线长度 */
-    @property
-    previewTime = 0.6;
-
-    private _aimDir: Vec2 | null = null;
-    private _inputRegistered = false;
+    /** 模态互斥镜像（UI_MODAL_CHANGED / GAME_OVER 同步 + 现实纠偏） */
     private _modalOpen = false;
-    private _activeTouchId: number | null = null;
+    /** 上次发射时刻（秒）：冷却节流基准 */
     private _lastLaunchTime = 0;
-    /** 钉子快照（TOUCH_START 时收集一次；拖拽期间钉子不会变化） */
-    private _pegSnapshot: PreviewPeg[] | null = null;
-
-    private readonly _tmpUIPos = new Vec2();
-    private readonly _tmpDir = new Vec2();
+    /** 自举的「发 射」按钮节点（ensureLaunchButton 创建 / 复用） */
+    private _launchBtn: Node | null = null;
+    /** 复用暂存：弹珠出生点（世界坐标） */
     private readonly _tmpWorld = new Vec3();
-    private readonly _tmpLocal = new Vec3();
 
     protected onLoad(): void {
         if (!this.launcherNode) {
@@ -86,10 +70,6 @@ export class LauncherController extends Component {
         }
         EventBus.on(GameEvents.UI_MODAL_CHANGED, this.onUiModalChanged, this);
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
-        // 输入看门狗：全局输入监听理论上只在 onDisable/onGameOver 注销，但曾出现「新局输入全死、
-        // 无诊断日志」（引擎输入模块被此前的 Button 崩溃打断进坏状态/监听静默丢失）——每 2s
-        // 幂等重挂一次（off+on 同回调同 target），监听健在时是无感的，丢了就自愈。
-        this.schedule(this.inputWatchdog, 2);
         // DOM 级逃生门（绕过引擎输入系统）：按 R 强制重开一局——输入系统整体坏死时唯一的自救手段
         if (typeof window !== 'undefined' && !(window as any).__pfPanicKey) {
             (window as any).__pfPanicKey = true;
@@ -100,280 +80,145 @@ export class LauncherController extends Component {
                 }
             });
         }
-    }
-
-    /** 看门狗心跳（全时运行）：先做模态现实同步（镜像卡 true 但弹窗实际全关 → 复位），再幂等重挂全局输入 */
-    private inputWatchdog(): void {
-        if (this._modalOpen && !anyModalOpen()) {
-            console.warn('[诊断] Launcher 模态镜像卡 true，已按现实复位并恢复输入');
-            this._modalOpen = false;
-            this.registerInput();
-        }
-        if (this._modalOpen || !this._inputRegistered) {
-            return;
-        }
-        input.off(Input.EventType.TOUCH_START, this.onTouchStart, this);
-        input.off(Input.EventType.TOUCH_MOVE, this.onTouchMove, this);
-        input.off(Input.EventType.TOUCH_END, this.onTouchEnd, this);
-        input.off(Input.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
-        input.on(Input.EventType.TOUCH_START, this.onTouchStart, this);
-        input.on(Input.EventType.TOUCH_MOVE, this.onTouchMove, this);
-        input.on(Input.EventType.TOUCH_END, this.onTouchEnd, this);
-        input.on(Input.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
-    }
-
-    protected onEnable(): void {
-        this.registerInput();
-    }
-
-    protected start(): void {
-        this.registerInput();
-    }
-
-    protected onDisable(): void {
-        this.unregisterInput();
-        this._aimDir = null;
-        this.clearTrajectory();
+        this.ensureLaunchButton();
     }
 
     protected onDestroy(): void {
-        this.unregisterInput();
         EventBus.targetOff(this);
     }
 
     private onUiModalChanged(open: boolean): void {
-        if (open) {
-            console.warn('[诊断] Launcher 收到 MODAL=true，调用栈：',
-                (new Error().stack ?? '').split('\n').slice(1, 5).join('\n'));
-        }
-        this._modalOpen = open;
-        if (open) {
-            this.unregisterInput();
-            this._aimDir = null;
-            this.clearTrajectory();
-        } else {
-            this.registerInput();
-        }
+        this.syncModalOpen(open);
     }
 
     private onGameOver(): void {
-        this._modalOpen = true;
-        this.unregisterInput();
-        this.clearTrajectory();
+        this.syncModalOpen(true);
     }
 
-    private registerInput(): void {
-        if (this._inputRegistered || this._modalOpen) return;
-        this._inputRegistered = true;
-        input.on(Input.EventType.TOUCH_START, this.onTouchStart, this);
-        input.on(Input.EventType.TOUCH_MOVE, this.onTouchMove, this);
-        input.on(Input.EventType.TOUCH_END, this.onTouchEnd, this);
-        input.on(Input.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
+    /** 模态现实同步：镜像说开但实际弹窗全关 → 自愈复位（历史 missed-false 卡死教训） */
+    private syncModalOpen(open: boolean): void {
+        this._modalOpen = open === true;
+        if (this._modalOpen && !anyModalOpen()) {
+            this._modalOpen = false;
+        }
     }
 
-    private unregisterInput(): void {
-        if (!this._inputRegistered) return;
-        this._inputRegistered = false;
-        input.off(Input.EventType.TOUCH_START, this.onTouchStart, this);
-        input.off(Input.EventType.TOUCH_MOVE, this.onTouchMove, this);
-        input.off(Input.EventType.TOUCH_END, this.onTouchEnd, this);
-        input.off(Input.EventType.TOUCH_CANCEL, this.onTouchCancel, this);
-        this._activeTouchId = null;
-    }
-
-    private onTouchStart(event: EventTouch): void {
-        const loc = event.getUILocation();
-        console.log(`[诊断] 全局触点按下 ui=(${loc.x.toFixed(0)},${loc.y.toFixed(0)}) modal=${this._modalOpen}`);
-        if (this._activeTouchId !== null || this._modalOpen) return;
-        this._activeTouchId = event.getID();
-        this.refreshPegSnapshot();
-        this.updateAim(event);
-        this.drawTrajectory();
-    }
-
-    private onTouchMove(event: EventTouch): void {
-        if (event.getID() !== this._activeTouchId || this._modalOpen) return;
-        this.updateAim(event);
-        this.drawTrajectory();
-    }
-
-    private onTouchEnd(event: EventTouch): void {
-        if (event.getID() !== this._activeTouchId) return;
-        this._activeTouchId = null;
-        if (this._modalOpen) return;
-
+    /**
+     * 「发 射」按钮点按链路（唯一发射入口）：弹窗互斥 → 冷却节流 → 发射。
+     * 看门狗已随全局输入退役——模态镜像卡死的现实同步在 syncModalOpen 完成。
+     */
+    private onLaunchClicked(): void {
+        if (this._modalOpen) {
+            return; // 弹窗期禁发（结算/奖励/商店等覆盖层打开时）
+        }
         const now = Date.now() / 1000;
-        if (now - this._lastLaunchTime >= this.launchCooldown) {
-            this.updateAim(event);
-            if (this._aimDir) {
-                this._lastLaunchTime = now;
-                this.launchOrb();
-            }
+        if (now - this._lastLaunchTime < this.launchCooldown) {
+            return; // 连点节流
         }
-        this._aimDir = null;
-        this.clearTrajectory();
+        this._lastLaunchTime = now;
+        this.launchOrb();
     }
 
-    private onTouchCancel(): void {
-        this._activeTouchId = null;
-        this._aimDir = null;
-        this.clearTrajectory();
-    }
-
-    private updateAim(event: EventTouch): void {
-        if (!this.launcherNode?.isValid) return;
-        event.getUILocation(this._tmpUIPos);
-        this.launcherNode.getWorldPosition(this._tmpWorld);
-
-        const dx = this._tmpUIPos.x - this._tmpWorld.x;
-        const dy = this._tmpUIPos.y - this._tmpWorld.y;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len < MIN_AIM_LENGTH) {
-            this._aimDir = null;
+    /**
+     * 自举屏底「发 射」按钮（幂等，场景无需布置）：Canvas/UILayer/LaunchBtn。
+     * 金色凸起（raisedButton + Theme.ui.gold）——发射是主动进攻动作，走金色 CTA
+     * 语言；Label 居中「发 射」。热重载时复用同名节点（事件随旧组件销毁，需重挂）。
+     */
+    private ensureLaunchButton(): void {
+        const uiLayer = director.getScene()?.getChildByName('Canvas')?.getChildByName('UILayer');
+        if (!uiLayer?.isValid) {
+            console.warn('[Launcher] 未找到 Canvas/UILayer，「发 射」按钮未自举');
             return;
         }
-        this._tmpDir.set(dx / len, dy / len);
-
-        const angle = Math.atan2(this._tmpDir.y, this._tmpDir.x);
-        let clamped: number;
-        if (angle >= MIN_LAUNCH_ANGLE && angle <= MAX_LAUNCH_ANGLE) {
-            clamped = angle;
-        } else if (this._tmpDir.x >= 0) {
-            clamped = MAX_LAUNCH_ANGLE;
-        } else {
-            clamped = MIN_LAUNCH_ANGLE;
-        }
-        this._tmpDir.set(Math.cos(clamped), Math.sin(clamped));
-        this._aimDir = this._tmpDir;
-    }
-
-    /** 收集全场钉子快照（世界坐标 → trajectoryGraphics 本地系；力竭钉 Collider 已禁用，物理上不存在，过滤掉） */
-    private refreshPegSnapshot(): void {
-        this._pegSnapshot = null;
-        const layer = this.launcherNode?.parent;
-        const graphics = this.trajectoryGraphics;
-        if (!layer?.isValid || !graphics?.isValid) return;
-
-        const comps = layer.getComponentsInChildren(PegComponent);
-        const pegs: PreviewPeg[] = [];
-        for (const c of comps) {
-            const n = c.node;
-            if (!n?.isValid || !n.activeInHierarchy || c.isExhausted) continue;
-            n.getWorldPosition(this._tmpWorld);
-            graphics.inverseTransformPoint(this._tmpLocal, this._tmpWorld);
-            // 半径取 CircleCollider2D 真值，异常回退 16
-            const col = n.getComponent(CircleCollider2D);
-            pegs.push({ x: this._tmpLocal.x, y: this._tmpLocal.y, r: col ? col.radius : ORB_RADIUS });
-        }
-        this._pegSnapshot = pegs;
-    }
-
-    private drawTrajectory(): void {
-        if (!this.trajectoryGraphics?.isValid || !this.launcherNode?.isValid || !this._aimDir) {
+        const existing = uiLayer.getChildByName('LaunchBtn');
+        if (existing?.isValid) {
+            this._launchBtn = existing;
             return;
         }
-        const g = this.trajectoryGraphics.getComponent(Graphics);
-        if (!g) return;
+        const btn = new Node('LaunchBtn');
+        btn.layer = uiLayer.layer; // 与 UILayer 同 layer，确保被同一 UI 相机渲染
+        btn.addComponent(UITransform).setContentSize(LAUNCH_BTN_W, LAUNCH_BTN_H);
+        btn.setPosition(0, LAUNCH_BTN_POS_Y, 0);
+        const g = btn.addComponent(Graphics);
+        raisedButton(g, LAUNCH_BTN_W, LAUNCH_BTN_H, Theme.ui.gold);
+        // ⚠️ cc.Label 与 cc.Graphics 同为 UIRenderer 派生组件、同节点互斥——直加会抛
+        // "conflicts with the existing 'cc.Graphics'" 中断创建链（按钮从未挂进场景）。
+        // 文字一律挂子节点（与 RewardDialog 换一批按钮等全库既有按钮同款结构）。
+        const labelNode = new Node('Label');
+        labelNode.layer = btn.layer;
+        btn.addChild(labelNode);
+        labelNode.addComponent(UITransform).setContentSize(LAUNCH_BTN_W, LAUNCH_BTN_H);
+        const label = labelNode.addComponent(Label);
+        label.string = '发 射';
+        label.fontSize = 26;
+        label.lineHeight = 30;
+        label.isBold = true;
+        label.color = Theme.white;
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        btn.addComponent(Button).transition = Button.Transition.NONE;
+        btn.on(Button.EventType.CLICK, this.onLaunchClicked, this);
+        this.attachPressFx(btn, LAUNCH_BTN_W, LAUNCH_BTN_H, Theme.ui.gold, LAUNCH_BTN_PRESS_DIP_Y);
+        uiLayer.addChild(btn);
+        this._launchBtn = btn;
+    }
 
-        const dir = this._aimDir;
-        this.launcherNode.getWorldPosition(this._tmpWorld);
-        this.trajectoryGraphics.inverseTransformPoint(this._tmpLocal, this._tmpWorld);
-        const sx = this._tmpLocal.x;
-        const sy = this._tmpLocal.y;
-
-        const nextType = DeckManager.instance?.peekNextOrbType() ?? 0;
-        const lineColor = orbAimColor(nextType); // 球种瞄准线色（ArtTheme 语义色板）
-
-        // 首段重力抛物线模拟：初速 = launchSpeed×倍率（对齐 fireOrb 的 velocity+impulse 叠加），
-        // 重力取物理系统真值；命中钉子/出界/进漏斗即截断（不做反弹链）
-        const sim = simulateAimPreview({
-            startX: sx,
-            startY: sy,
-            vx: dir.x * this.launchSpeed * this.previewSpeedScale,
-            vy: dir.y * this.launchSpeed * this.previewSpeedScale,
-            gravity: PhysicsSystem2D.instance?.gravity?.y ?? -320,
-            orbR: ORB_RADIUS,
-            maxTime: this.previewTime,
-            dt: PREVIEW_DT,
-            fieldHalfW: FIELD_HALF_W,
-            floorY: FUNNEL_Y,
-            pegs: this._pegSnapshot ?? [],
-        });
-
-        g.clear();
-
-        // 沿弧长均匀撒点（Peggle 式点列：弯曲轨迹上等距实心点，起点处不画）
-        const pts = sim.points;
-        const dots: Array<[number, number]> = [];
-        let px = pts[0][0];
-        let py = pts[0][1];
-        let need = PREVIEW_DOT_SPACING;
-        for (let i = 1; i < pts.length; i++) {
-            const qx = pts[i][0];
-            const qy = pts[i][1];
-            const dx = qx - px;
-            const dy = qy - py;
-            let segLen = Math.sqrt(dx * dx + dy * dy);
-            if (segLen > 0) {
-                const ux = dx / segLen;
-                const uy = dy / segLen;
-                while (segLen >= need) {
-                    px += ux * need;
-                    py += uy * need;
-                    dots.push([px, py]);
-                    segLen -= need;
-                    need = PREVIEW_DOT_SPACING;
-                }
-                px += ux * segLen;
-                py += uy * segLen;
+    /**
+     * 按钮按压手感（通用，吃任何 raisedButton 凸起按钮）：
+     * 按下 → 节点下沉 dipY + 按压态重绘（影子塌缩 / 暗边减半 / 面部减光，UiKit.raisedButton pressed）；
+     * 松手/滑出 → 弹回原位 + 静止态重绘，backOut 缓动带一点「弹起」的活泼劲。
+     * 监听挂按钮节点（闭包持原坐标，随节点销毁回收，无组件无 this）；底位取挂载时现值，热重载位移后仍准。
+     */
+    private attachPressFx(btn: Node, w: number, h: number, body: Color, dipY: number): void {
+        const restY = btn.position.y;
+        const repaint = (pressed: boolean): void => {
+            const g = btn.getComponent(Graphics);
+            if (!g?.isValid) {
+                return;
             }
-            need -= segLen;
-        }
-
-        // ★ 柔光瞄准点：大而淡的底光 + 小而实的芯（同 Graphics 两层绘制，零额外 draw call）
-        const soft = cloneColor(lineColor);
-        soft.a = 70;
-        g.fillColor = soft;
-        for (const [sx, sy] of dots) {
-            g.circle(sx, sy, PREVIEW_DOT_R * 2.6);
-        }
-        g.fill();
-        g.fillColor = lineColor;
-        for (const [cx, cy] of dots) {
-            g.circle(cx, cy, PREVIEW_DOT_R);
-        }
-        g.fill();
-
-        // 命中高亮：目标钉子外圈描边（含弹珠半径余量，视觉上「球将撞到这里」）
-        if (sim.hitPeg) {
-            g.lineWidth = 4;
-            g.strokeColor = lineColor;
-            g.circle(sim.hitPeg.x, sim.hitPeg.y, sim.hitPeg.r + ORB_RADIUS + 4);
-            g.stroke();
-        }
+            g.clear();
+            raisedButton(g, w, h, body, undefined, pressed);
+        };
+        btn.on(Node.EventType.TOUCH_START, (): void => {
+            Tween.stopAllByTarget(btn);
+            btn.setPosition(btn.position.x, restY - dipY, 0);
+            repaint(true);
+        }, this);
+        const release = (): void => {
+            Tween.stopAllByTarget(btn);
+            repaint(false);
+            tween(btn)
+                .to(0.06, { position: new Vec3(btn.position.x, restY, 0) }, { easing: 'backOut' })
+                .start();
+        };
+        btn.on(Node.EventType.TOUCH_END, release, this);
+        btn.on(Node.EventType.TOUCH_CANCEL, release, this);
     }
 
-    private clearTrajectory(): void {
-        if (!this.trajectoryGraphics?.isValid) return;
-        const g = this.trajectoryGraphics.getComponent(Graphics);
-        g?.clear();
+    /** 滚定一次随机出射角（度）：[-165°, -15°] 均匀分布，恒向上扇区（左右各留 15° 贴墙死区）。 */
+    private rollLaunchAngle(): number {
+        return LAUNCH_ANGLE_MIN_DEG
+            + Math.random() * (LAUNCH_ANGLE_MAX_DEG - LAUNCH_ANGLE_MIN_DEG);
     }
 
+    /**
+     * 发射当前弹珠（唯一调用方：onLaunchClicked）。
+     * ★ 每发先重滚随机出射角——随机发生在本函数内部，冷却外的每次点按都拿到新方向
+     * （用户拍板：每次发射都随机，不是开局滚一次定死），再按球种走雷球散射或单球发射。
+     */
     private launchOrb(): void {
-        // 🎯 发射免费（2026-09-03 回滚发射经济）：每发扣 3 金曾造成「0 金拒发 → 打不到金币槽 →
-        // 永远 0 金」的死锁（发射是核心动作，不该被货币卡脖子；补贴 9 金只兜 3 发根本不够）。
-        // 金币回归纯商店货币：收入 = 击杀掉落 + 金币槽 +20 + 波次补贴 9。
-        // DeckManager 为纯类型化卡组（不持有 Prefab），发射统一使用本组件配置的 orbPrefab
-        // （原代码引用了不存在的 DeckManager.baseOrbPrefab，运行时恒走 fallback，此处清理为直接取值）
+        const deg = this.rollLaunchAngle();
+        const rad = deg * Math.PI / 180;
+        const dir = new Vec2(Math.cos(rad), Math.sin(rad));
         const prefab = this.orbPrefab;
-        if (!prefab?.isValid || !this.launcherNode?.isValid || !this._aimDir) {
+        if (!prefab?.isValid || !this.launcherNode?.isValid) {
             console.warn('[Launcher] 弹珠 Prefab 或发射点无效！');
             return;
         }
-        const dir = this._aimDir;
-
+        // 🎯 发射免费（2026-09-03 回滚发射经济）：金币回归纯商店货币（击杀掉落 + 金币槽 +20 + 波次补贴）。
+        // DeckManager 为纯类型化卡组（不持有 Prefab），发射统一使用本组件配置的 orbPrefab
         const orbType = DeckManager.instance?.drawNextOrbType() ?? 0;
-        console.log(`[Launcher] 🚀 成功发射弹珠: 类型=${orbType}`);
+        console.log(`[Launcher] 🚀 成功发射弹珠: 类型=${orbType} 角度=${Math.round(deg)}°`);
 
         if (orbType === OrbType.Lightning) {
             this.fireLightningBurst(prefab, dir);

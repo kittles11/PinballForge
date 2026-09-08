@@ -321,9 +321,9 @@ export class ResultDialog extends Component {
 
     /** 三枚动作按钮幂等创建（节点复用，每次结算只刷新文案与可见性） */
     private ensureActionButtons(): void {
-        this.makeActionButton('AdReviveBtn', -150, '📺 看广告 复活', () => this.onReviveClick());
+        this.makeActionButton('AdReviveBtn', -150, '看广告 复活', () => this.onReviveClick());
         this.makeActionButton('AdDoubleBtn', 150, '', () => this.onShardsDoubleClick());
-        this.makeActionButton('EndlessBtn', 0, '🌌 进入无尽模式', () => this.onEndlessClick());
+        this.makeActionButton('EndlessBtn', 0, '进入无尽模式', () => this.onEndlessClick());
     }
 
     /** 结算动作按钮统一样式：凸起金底 + 居中文案（y=-330，锻造区与再来一局之间） */

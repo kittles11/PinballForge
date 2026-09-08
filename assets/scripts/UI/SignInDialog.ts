@@ -143,7 +143,7 @@ export class SignInDialog extends Component {
         const pg = panel.addComponent(Graphics);
         raisedButton(pg, PANEL_WIDTH, PANEL_HEIGHT, Theme.ui.panel, 18);
         // 3) 标题 / 副标题
-        this.makeLabel('Title', 0, PANEL_HEIGHT / 2 - 56, 26, '📅 七日签到', Theme.ui.gold, 480);
+        this.makeLabel('Title', 0, PANEL_HEIGHT / 2 - 56, 26, '七日签到', Theme.ui.gold, 480);
         this.makeLabel('Subtitle', 0, PANEL_HEIGHT / 2 - 96, 16, '连续签到奖励递增 · 断签不清零 · 第 8 天循环回第 1 格', Theme.ui.header, 540);
         // 4) 七日格（位置固定，refresh 只重画与改文案）
         const totalW = 7 * CELL_W + 6 * CELL_GAP;

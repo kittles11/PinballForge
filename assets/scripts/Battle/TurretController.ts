@@ -56,7 +56,18 @@ export class TurretController extends Component {
      * （零图片资产），炮台改为代码绘制，与 DailyTaskBadge.buildUI 同款范式。
      */
     private drawTurret(): void {
-        const g = this.getComponent(Graphics) ?? this.node.addComponent(Graphics);
+        // ★ 2026-09-06：Graphics 迁入专用 TurretArt 子节点（与钉子 PegArt / 弹珠 OrbBody 同构）。
+        //   场景 Turret 节点残留旧贴图 Sprite（57520716… 已删，_spriteFrame 序列化为 null），
+        //   绘制层与该 Sprite 同节点并存属 renderable 互斥风险面（3.8.8 引擎 addComponent 冲突检测
+        //   在 EDITOR 分支被注释、运行时静默放行且行为未定义），子节点化后从根上隔离，不再触碰场景文件。
+        let art = this.node.getChildByName('TurretArt');
+        if (!art?.isValid) {
+            art = new Node('TurretArt');
+            art.layer = this.node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
+            art.addComponent(UITransform);
+            art.setParent(this.node);
+        }
+        const g = art.getComponent(Graphics) ?? art.addComponent(Graphics);
         g.clear();
         // 炮管（朝上，先画，根部由底座覆盖）
         g.fillColor = Theme.machine.body;

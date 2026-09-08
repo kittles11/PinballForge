@@ -7,7 +7,7 @@ import { anyModalOpen } from '../Core/ModalGate';
 import { EnemyController } from './EnemyController';
 import {
     WaveDef, RelicType, EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, rollEnemyType,
-    rollEliteAffixes,
+    rollEliteAffixes, ContractManager,
 } from '../Core/DataModels';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
 import { RelicManager, CROWN_GOLD_AMOUNT, CROWN_SHIELD_AMOUNT } from '../Core/RelicManager';
@@ -455,6 +455,8 @@ export class WaveManager extends Component {
         }
         this._waveSettled = false;
         if (this.currentWave >= this.maxWaves) {
+            // ⚑ 锻造契约（方案C）：通关登记——以刚打通的关卡号判定（nextLevel 会推进 currentLevel，故先登记）
+            ContractManager.notifyLevelCleared(LevelManager.currentLevel);
             // 本关最后一波完成：进入下一关（章节可能 +1），从第 1 波重新开始
             LevelManager.nextLevel();
             // ★ 王者之冕：通关一关结算时额外 +30 金币（RelicInfo 描述「通关关卡结算时额外获得」）

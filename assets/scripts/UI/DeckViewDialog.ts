@@ -300,8 +300,8 @@ export class DeckViewDialog extends Component {
 
         // 3) 关闭按钮（凸起浮雕样式）+ 底部工具入口（📅 签到 / ⚙ 设置）
         this.createCloseButton();
-        this.createUtilityButton('SignInEntryBtn', 237, '📅 签到', GameEvents.SHOW_SIGNIN);
-        this.createUtilityButton('SettingsEntryBtn', -237, '⚙ 设置', GameEvents.SHOW_SETTINGS);
+        this.createUtilityButton('SignInEntryBtn', 237, '签到', GameEvents.SHOW_SIGNIN);
+        this.createUtilityButton('SettingsEntryBtn', -237, '设置', GameEvents.SHOW_SETTINGS);
     }
 
     /**

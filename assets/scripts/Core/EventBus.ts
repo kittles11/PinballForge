@@ -6,6 +6,8 @@ import type { EnemyController } from '../Battle/EnemyController';
 export enum GameEvents {
     /** 珠子撞中钉子 */
     ORB_HIT_PEG = 'ORB_HIT_PEG',
+    /** 钉子力竭（打满 maxHitsPerRound 变灰，仍保留碰撞体）：PegComponent.exhaust 广播，PegBoardManager 的 Boss 波软复位统计用 */
+    PEG_EXHAUSTED = 'PEG_EXHAUSTED',
     /** 珠子滚入漏斗（回收 / 重发） */
     ORB_ENTER_FUNNEL = 'ORB_ENTER_FUNNEL',
     /** 弹珠累计能量实时更新（顶部 Label 刷新） */
@@ -59,6 +61,7 @@ export enum GameEvents {
 /** 事件 → 载荷 的映射。新增事件时只需在这里登记一次。 */
 export interface GameEventMap {
     [GameEvents.ORB_HIT_PEG]: { pegId: string; orbId: string; points: number; hitCount: number };
+    [GameEvents.PEG_EXHAUSTED]: void;
     [GameEvents.ORB_ENTER_FUNNEL]: { orbId: string; funnelId: string };
     [GameEvents.UPDATE_ENERGY]: number;
     /** 炮塔开火（funnelType：入槽漏斗类型，Boss「破阵坚盾」剥盾判定用；可选字段向后兼容） */

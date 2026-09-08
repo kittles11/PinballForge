@@ -36,3 +36,5 @@ node_modules/
 *.zip
 # raw art source images (large, local only)
 raw-art-src/
+
+dda-err.txt

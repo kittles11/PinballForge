@@ -1,14 +1,18 @@
 import {
     _decorator, Component, Node, Sprite, Color, Vec3, Graphics, UITransform,
-    tween, Tween, Label,
+    tween, Tween, Label, RigidBody2D, ERigidBody2DType, CircleCollider2D,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
+import { AudioManager, KILL_STREAK_REWARD } from '../Core/AudioManager';
+import { HitStop } from '../Core/HitStop';
+import { CameraShake } from '../Core/CameraShake';
 import {
     EnemyType, ENEMY_TYPE_STATS, ENEMY_BODY_RADIUS, OrbType, RelicType,
     FunnelType, BossBehavior, BOSS_BEHAVIOR_STATS,
     bossBehaviorForChapter, bulwarkIntervalForChapter, summonHpRatioForChapter,
     EnemyAffix, AFFIX_STATS, affixScaleForChapter, AFFIX_HASTE_GROWTH,
 } from '../Core/DataModels';
+import { OrbBalance } from '../Core/OrbBalance';
 import { RelicManager, THORN_REFLECT_DAMAGE } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
 import { GoldManager } from '../Core/GoldManager';
@@ -36,6 +40,22 @@ const DIE_EXPLODE_SCALE = 1.7;
 const DIE_ANIM_DURATION = 0.3;
 /** 头槌冲撞：到达防线后向左扑撞的距离（px） */
 const ATTACK_LUNGE_X = 25;
+/** 弹珠直接命中击退：初速（px/s，向右 = 推离防线）与衰减（px/s²），滑行约 17px 后停下 */
+const KNOCKBACK_SPEED = 90;
+const KNOCKBACK_DECAY = 240;
+/** 敌人物理分组位掩码（project.json collisionGroups ENEMY index 5 = 1<<5，仅与 ORB 互通） */
+const ENEMY_GROUP_MASK = 1 << 5;
+
+// ── ★ Task 004 敌人受击反馈包（击杀：HitStop 60ms + blast + 击杀音；连杀递进）──
+/** 击杀顿帧（ms）：主目标反馈 ≥ 撞钉反馈（重炮开火 40ms），钳制上限 110ms 之内 */
+const DIE_HITSTOP_MS = 60;
+/** 击杀爆炸演出半径（px）：FxManager.blast 的白闪+冲击环+火星+烟团 */
+const DIE_BLAST_RADIUS = 96;
+/** 击杀震屏强度 / 时长（与 blast 同帧触发，弱于重炮开火震屏 6~14px 区间的下沿） */
+const DIE_SHAKE_INTENSITY = 5;
+const DIE_SHAKE_DURATION = 0.16;
+/** 连杀窗口（秒）：与 AudioManager.KILL_STREAK_WINDOW 一致的本地常量（避免运行时跨模块读导出） */
+const STREAK_WINDOW_FALLBACK = 3;
 
 /** 🛡️ 铁甲怪护盾格挡：身体闪的银蓝光 */
 const SHIELD_BLOCK_COLOR = Theme.enemy.shieldBlock;
@@ -102,6 +122,17 @@ export class EnemyController extends Component {
     /** 头顶护盾层数指示点根节点 */
     private _shieldPipsRoot: Node | null = null;
 
+    // ---------- ★ Task 004 敌人受击反馈包：连杀递进计数 ----------
+    /** 上次击杀时刻（ms）：连杀窗口判定（窗口过期自动重置连杀） */
+    private static _lastKillAt = 0;
+    /** 当前连杀数（音高爬升系数 = 1 + 连杀 × 0.12，封顶 2×） */
+    private static _killStreakCount = 0;
+
+    /** 只读连杀数（AudioManager.playKill 消费；测试/埋点可读） */
+    public static get killStreakCount(): number {
+        return EnemyController._killStreakCount;
+    }
+
     // ---------- 👹 Boss 特色行为（P2-1，设计稿 docs/BOSS_DESIGN.md；非 Boss 全部为默认值零开销） ----------
 
     /** 本 Boss 的特色行为（start 时按章节轮换表分配） */
@@ -163,6 +194,9 @@ export class EnemyController extends Component {
     static purgeSummonMult = 1;
     /** 🃏 猎首契约（应答卡）：对精英（带词缀）与 Boss 的伤害倍率，1 = 无加成 */
     static bountyEliteMult = 1;
+    /** ⚗️ 碎冰（Task 008 协同）：雷球对冰封敌人的碎冰直伤倍率，1 = 无加成；
+     *  卡牌应答位预留（resetStaticData 全覆盖防残留）。 */
+    static shatterBonusMult = 1;
 
     /** 重开前重置全部静态状态（ResultDialog 重载场景前调用，防上次对局的强化残留） */
     static resetStaticData(): void {
@@ -171,10 +205,13 @@ export class EnemyController extends Component {
         EnemyController.shieldbreakerStrips = 0;
         EnemyController.purgeSummonMult = 1;
         EnemyController.bountyEliteMult = 1;
+        EnemyController.shatterBonusMult = 1; // ⚗️ 碎冰倍率（Task 008）重开零残留
     }
 
     /** 攻城攻击计时器（到防线后开始累计） */
     private attackTimer = 0;
+    /** 击退剩余滑行速度（px/s，向右；update 中衰减消费，0 = 无击退。弹珠直接命中时置位） */
+    private _knockbackSpeed = 0;
     /** 头槌冲撞动画播放中（期间让位 tween 驱动位置，不参与防线锁定，避免动画被每帧覆盖） */
     private _lungeAnimating = false;
 
@@ -305,6 +342,10 @@ export class EnemyController extends Component {
 
         // 游戏结束：全员立即停步停攻、原地庆祝（严格全局锁定）
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
+
+        // ★ 弹珠×敌人直接物理交互（2026-09-07 根修）：敌人补上 Kinematic 刚体 + 圆形碰撞体，
+        //   弹珠不再穿敌（此前敌人无物理体，弹珠伤害只能绕道钉板——撞敌直伤见 OrbController.hitEnemy）
+        this.ensurePhysicsBody();
     }
 
     protected onDestroy(): void {
@@ -341,9 +382,14 @@ export class EnemyController extends Component {
             return;
         }
         const y = this.node.position.y;
-        const nx = this.node.position.x - this.moveSpeed * dt;
+        // 击退滑行：被弹珠直接命中后向右（推离防线）衰减滑行，与行进速度合成
+        let nx = this.node.position.x - this.moveSpeed * dt;
+        if (this._knockbackSpeed > 0) {
+            nx += this._knockbackSpeed * dt;
+            this._knockbackSpeed = Math.max(0, this._knockbackSpeed - KNOCKBACK_DECAY * dt);
+        }
         if (nx > this.defenseLineX) {
-            // 未到达防线：正常向左行进
+            // 未到达防线：正常向左行进（击退只会让 x 更靠右，不影响防线判定与到达锁死）
             this.node.setPosition(nx, y, 0);
             return;
         }
@@ -481,9 +527,13 @@ export class EnemyController extends Component {
                 HEAVY_HIT_TEXT_COLOR, true,
             );
         }
-        // ★ 极寒易伤被动：被冰封的敌人所受伤害额外 × 冰封易伤倍率（极寒易伤卡，默认 1）
+        // ★ 极寒易伤（两段独立乘区，乘法叠加——与破绽 ×2 / 清剿令 / 猎首同一乘区惯例）：
+        //   ① OrbBalance.frost.freezeVulnerability = 冰球签名易伤（0.25）：冻结来源只有冰球体系
+        //      （霜冻弹直击 3s / 霜冻球入槽全场 4s），故 isFrozen 即冰封易伤生效——冰球核心闭环
+        //      「冻结 → 易伤 → 打得动肉度」；此前该字段恒 0 且无消费点，冰球只剩控制没有收益；
+        //   ② EnemyController.iceVulnerableMult = 战后「极寒易伤」卡（默认 1，拿卡 +50%）。
         if (this.isFrozen) {
-            dmg *= EnemyController.iceVulnerableMult;
+            dmg *= EnemyController.iceVulnerableMult * (1 + OrbBalance.frost.freezeVulnerability);
         }
         // 🃏 清剿令：召唤物/分裂小怪（isMini）受到的伤害 ×purgeSummonMult
         if (this.isMini && EnemyController.purgeSummonMult !== 1) {
@@ -749,6 +799,35 @@ export class EnemyController extends Component {
         this.node.addChild(n);
     }
 
+    /** 弹珠直接命中击退（OrbController.hitEnemy 调用）：向右滑行一小段（推离防线）。
+     *  冻结 / 施法前摇 / 头槌冲撞 / 庆祝 / 死亡中不生效——这些状态的位置由各自驱动（锁定 / tween）接管。 */
+    public knockback(): void {
+        if (this._dead || !this.node?.isValid || this.isFrozen || this._casting
+            || this._lungeAnimating || this._celebrating) {
+            return;
+        }
+        this._knockbackSpeed = KNOCKBACK_SPEED;
+    }
+
+    /**
+     * ★ 弹珠×敌人直接物理交互（2026-09-07 根修）：为敌人补上物理体——
+     * Kinematic 刚体（位置由 update 的 setPosition 驱动，每帧同步进 b2Body，不受弹珠冲击位移）
+     * + 圆形碰撞体，半径按 ENEMY_BODY_RADIUS × 节点缩放适配（Boss / 小怪 scale 已在激活前 setScale）。
+     * 分组 ENEMY（index 5）与弹珠 ORB 互通、与其余组隔离（见 settings/v2/packages/project.json
+     * 碰撞矩阵）——敌人不与钉 / 墙 / 漏斗碰撞：不挡弹珠路径、不误触入槽、不被钉板卡位。
+     * 幂等：prefab 若未来预配了刚体则跳过（不重复添加）。
+     */
+    private ensurePhysicsBody(): void {
+        if (!this.node?.isValid || this.getComponent(RigidBody2D)) {
+            return;
+        }
+        const rb = this.node.addComponent(RigidBody2D);
+        rb.type = ERigidBody2DType.Kinematic;
+        rb.group = ENEMY_GROUP_MASK;
+        const col = this.node.addComponent(CircleCollider2D);
+        col.radius = ENEMY_BODY_RADIUS * Math.abs(this.node.scale.x || 1);
+    }
+
     /** 解除急冻定身：恢复移动并还原身体颜色 */
     private unfreeze(): void {
         this.isFrozen = false;
@@ -756,6 +835,20 @@ export class EnemyController extends Component {
         if (sp?.isValid) {
             sp.color = this._baseColor;
         }
+    }
+
+    /**
+     * ⚗️ 碎冰（Task 008 协同）：外部强制解除冻结（雷球碎冰时调用）——「引爆冰雕」一次性回报，
+     * 冻结易伤窗口随之失去（碎冰 50 直伤 vs 易伤窗口的取舍）。颜色还原复用 unfreeze 同一逻辑。
+     * 公开方法：OrbController（Pinball 目录）经 EnemyManager 拿到的是 EnemyController 引用，
+     * 只能调公开 API——不暴露 unfreeze 本身（它绑定 scheduleOnce 计时器语义）。
+     */
+    public breakFreeze(): void {
+        if (this._dead || !this.node?.isValid) {
+            return;
+        }
+        this.unschedule(this.unfreeze); // 同步取消挂起的解冻计时器，防 3s 后误解冻覆盖状态
+        this.unfreeze();
     }
 
     /**
@@ -1057,6 +1150,41 @@ export class EnemyController extends Component {
         const stats = ENEMY_TYPE_STATS[this.enemyType];
         if (stats) {
             FxManager.gibs(this.node.worldPosition, rgb(stats.color.r, stats.color.g, stats.color.b), 7);
+        }
+        // ── ★ Task 004 击杀反馈包（2026-09-07）：主目标反馈 ≥ 撞钉反馈 ──
+        //   撞钉只有火花+叮声，击杀在此之上叠 60ms 顿帧 + blast 爆闪 + 震屏 + 专属击杀音。
+        //   连杀递进：STREAK_WINDOW_FALLBACK 秒内连续击杀 → 音高系数每杀 +0.12（封顶 2×），
+        //   窗口外重置为 1（断档即断连杀）。弹窗期免疫复用三套现成锁：
+        //   HitStop.stop 内建 _modalOpen 门禁 / FxManager.obtain 弹窗期拒发 / CameraShake._isModalOpen，
+        //   本处不新造锁；击杀可经 takeDamage 在物理回调栈内触发，顿帧只翻 PhysicsSystem2D.enable
+        //   开关（与 FIRE_TURRET → onFireTurret 同款既有路径），不触碰刚体/碰撞体增删。
+        const now = Date.now();
+        EnemyController._killStreakCount =
+            now - EnemyController._lastKillAt <= STREAK_WINDOW_FALLBACK * 1000
+                ? EnemyController._killStreakCount + 1
+                : 1;
+        EnemyController._lastKillAt = now;
+        const killStreak = EnemyController._killStreakCount;
+        // ① 击杀音：KILL_SFX_BASE 主体 + 连杀层（连杀 ≥2 追加高亮拨弦，音高随连杀爬升）；
+        //   连杀达 KILL_STREAK_REWARD 再叠一道奖励琶音（里程碑反馈）
+        AudioManager.playKill(killStreak);
+        if (killStreak >= KILL_STREAK_REWARD) {
+            AudioManager.playKillStreak();
+        }
+        // ② 爆炸演出：白闪 + 冲击环 + 火星迸溅 + 烟团（体色着色，与死亡爆浆分层）
+        if (stats) {
+            FxManager.blast(this.node.worldPosition, rgb(stats.color.r, stats.color.g, stats.color.b), DIE_BLAST_RADIUS);
+        }
+        // ③ 震屏 + 顿帧：击杀强度低于重炮开火（不喧宾夺主），但高于普通受击白闪（零震屏）
+        CameraShake.shake(DIE_SHAKE_INTENSITY, DIE_SHAKE_DURATION);
+        HitStop.stop(DIE_HITSTOP_MS);
+        // ④ 连杀递进跳字：连杀 ≥2 在头顶追报（✕2/✕3…），给「滚雪球」以可读反馈
+        if (killStreak >= 2 && this.node?.isValid) {
+            FloatingTextManager.instance?.showText(
+                `连杀 ✕${killStreak}`,
+                new Vec3(this.node.worldPosition.x, this.node.worldPosition.y + HIT_TEXT_OFFSET_Y + 16, 0),
+                Theme.enemy.lightningText,
+            );
         }
         if (this._hpBarRoot?.isValid) {
             this._hpBarRoot.active = false;

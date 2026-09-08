@@ -6,6 +6,11 @@ import { OrbType } from './DataModels';
 /** 开火音效独立编号：金币槽专属 Ching（珠子音效编号跟随 OrbType 0~3，金币音避开该区间单独编 9） */
 export const FIRE_SFX_COIN = 9;
 
+/** 击杀连杀窗口（秒）：窗口内再次击杀视为连杀，击杀音播放速率随连杀数爬升 */
+export const KILL_STREAK_WINDOW = 3;
+/** 连杀奖励音阈值（只对达到该连杀数的击杀弹奖励琶音） */
+export const KILL_STREAK_REWARD = 3;
+
 /**
  * 音频管理器：纯静态类，无需挂载到任何场景节点，import 即用。
  *
@@ -452,6 +457,63 @@ export class AudioManager {
     }
 
     // ---------- 工具 ----------
+
+    /** 击杀连杀计数（Task 004）：连杀窗口内累计；窗口外清零重计 */
+    private static _killStreak = 0;
+    /** 上次击杀时刻（performance.now，ms）：KILL_STREAK_WINDOW 窗口判定 */
+    private static _lastKillAt = 0;
+
+    /**
+     * 击杀音（Task 004 敌人受击反馈包）：纯 Web Audio 合成，零素材零 Inspector；
+     * 播放速率随连杀数爬升（0.05/杀，与撞钉 playHit 同款爬升曲线，钳制 2×）。
+     * @param streakBonus 实参填 EnemyController._killStreakCount；内部再按 KILL_STREAK_WINDOW
+     *   做窗口衰减（窗口过期按 1 重计，模块无 cc 依赖可被 Node 自检直接 import）。
+     */
+    public static playKill(streakBonus: number = 1): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
+        AudioManager.unlockAudio();
+        const ctx = AudioManager.ctx;
+        if (!ctx) {
+            return; // 无 Web Audio API：静默降级
+        }
+        const now = typeof performance !== 'undefined' && performance.now ? performance.now() : 0;
+        // 连杀窗口：与上次击杀间隔超过 KILL_STREAK_WINDOW 秒 → 连杀断掉，按首杀重计
+        if (now - AudioManager._lastKillAt > KILL_STREAK_WINDOW * 1000) {
+            AudioManager._killStreak = 0;
+        }
+        AudioManager._lastKillAt = now;
+        AudioManager._killStreak += 1;
+        // 播放速率取调用方计数与内部计数较大者：Boss 击杀带精英/Boss 加成也可用同一入口
+        const combo = Math.max(1, streakBonus, AudioManager._killStreak);
+        const rate = Math.min(1 + Math.max(0, combo - 1) * 0.05, 2);
+        // 主体：双音下滑（方波低鸣 + 高频短促收尾），与「鼓点」区别于撞钉「叮」的清脆单音
+        AudioManager.playTone('square', 330, 0.14, 0.2, { endFreq: 150 });
+        AudioManager.playTone('sine', 980, 0.08, 0.14, { delay: 0.02, endFreq: 220 });
+        // 连杀层：连杀 ≥2 后追加一道随连杀爬升的高亮拨弦（playbackRate 爬升的合成等价层）
+        if (combo >= 2) {
+            AudioManager.playTone('triangle', 520, 0.12, 0.16, { delay: 0.03, endFreq: 1040 * rate });
+        }
+    }
+
+    /**
+     * 连杀奖励音（Task 004）：连杀达到 KILL_STREAK_REWARD 时叠放的高亮上扬短琶音。
+     * 播放速率与连杀数绑定（≥2 时随连杀继续爬升），与主体击杀音错峰。
+     */
+    public static playKillStreak(): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
+        AudioManager.unlockAudio();
+        const ctx = AudioManager.ctx;
+        if (!ctx) {
+            return; // 无 Web Audio API：静默降级
+        }
+        const combo = Math.max(1, AudioManager._killStreak);
+        AudioManager.playTone('sine', 660, 0.1, 0.18, { delay: 0.06, endFreq: 990 });
+        AudioManager.playTone('sine', 880, 0.14, 0.16, { delay: 0.12, endFreq: 1320 * Math.min(2, 1 + Math.max(0, combo - 1) * 0.05) });
+    }
 
     /** 音量钳制：Safari 的 exponentialRampToValueAtTime 不允许当前值/目标值为 0，统一钳制到最小正数 */
     private static vol(volume: number): number {

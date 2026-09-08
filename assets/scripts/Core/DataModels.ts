@@ -599,6 +599,93 @@ export const META_UNLOCKED_CARDS: CardData[] = [
     },
 ];
 
+// ---------- ⚑ 锻造契约（方案C：开局 Build Around） ----------
+
+/** 契约 id（OrbBalance.applyContract 消费；三选一展示数据见 CONTRACTS 表） */
+export type ContractId = 'contract_thunder' | 'contract_forge' | 'contract_frost';
+
+/**
+ * 契约展示数据（增益/代价的「文案承诺值」；实际结算与验证期软启动缩放见
+ * OrbBalance.applyContract / CONTRACT_DEBUFF_SCALE——数据与结算分离，文案↔实现一致性由 selfcheck-contracts 锁定）。
+ */
+export interface ContractData {
+    id: ContractId;
+    /** 契约名（雷霆 / 熔炉 / 寒霜） */
+    title: string;
+    /** IconLib 注册图标名（bolt / flame / snow，selfcheck-icon-ui 规则 B 把关） */
+    icon: string;
+    /** 增益描述（立约起整局生效） */
+    boon: string;
+    /** 代价描述（立约起整局生效；验证期实际减半，见 OrbBalance.CONTRACT_DEBUFF_SCALE） */
+    bane: string;
+}
+
+export const CONTRACTS: ContractData[] = [
+    {
+        id: 'contract_thunder', title: '雷霆契约', icon: 'bolt',
+        boon: '雷球伤害 ×1.5，散射 3 连发 → 5 连发',
+        bane: '普通弹珠伤害 -40%',
+    },
+    {
+        id: 'contract_forge', title: '熔炉契约', icon: 'flame',
+        boon: '熔岩溅射常驻，殉爆半径 +50%',
+        bane: '金币槽产出 -50%',
+    },
+    {
+        id: 'contract_frost', title: '寒霜契约', icon: 'snow',
+        boon: '冰封易伤 0.25 → 0.5，冻结时长 +2 秒',
+        bane: '城堡生命上限 -20%',
+    },
+];
+
+/** 契约解锁存档键（跨局持久；与关卡进度 pinballforge_progress / meta pinballforge_meta 完全独立） */
+const CONTRACT_SAVE_KEY = 'pinballforge_contract';
+/** 契约解锁门槛：通关第 2 关后开放三选一（第 1 关裸体验，契约代价不劝退新手） */
+export const CONTRACT_UNLOCK_LEVEL = 2;
+
+/**
+ * 契约解锁进度（模块级单例，纯逻辑零 cc 依赖）：只管「解锁与否」的跨局存档。
+ * 本局立约状态（activeContract / contractGoldMult / castleHpMult）在 OrbBalance，
+ * 运行时归零走 OrbBalance.reset()（重开一局清契约、解锁资格保留）。
+ */
+class ContractManagerClass {
+    /** 是否已解锁（null = 未从存档加载，惰性初始化防奖励弹窗前漏 ensure） */
+    private _unlocked: boolean | null = null;
+
+    /** 是否已解锁（惰性读档；无存档 / 解析失败按未解锁处理） */
+    get unlocked(): boolean {
+        if (this._unlocked === null) {
+            try {
+                this._unlocked = localStorage.getItem(CONTRACT_SAVE_KEY) === 'true';
+            } catch {
+                this._unlocked = false;
+            }
+        }
+        return this._unlocked;
+    }
+
+    /** 解锁状态落盘（stub / 隐私模式写失败不致命：本局内解锁仍生效，下次进游戏重新达标） */
+    private save(): void {
+        try {
+            localStorage.setItem(CONTRACT_SAVE_KEY, String(this._unlocked === true));
+        } catch {
+            /* 存档不可用：忽略 */
+        }
+    }
+
+    /** 通关关卡号登记（WaveManager 每关最后一波结算时调用；达到门槛即永久解锁，幂等） */
+    notifyLevelCleared(level: number): void {
+        if (!this.unlocked && level >= CONTRACT_UNLOCK_LEVEL) {
+            this._unlocked = true;
+            this.save();
+            console.log(`[Contract] 锻造契约已解锁（通关第 ${level} 关，此后每关最后一波可立约）`);
+        }
+    }
+}
+
+/** 全局单例（纯逻辑，无需场景挂载） */
+export const ContractManager = new ContractManagerClass();
+
 /** 三选一稀有度权重（P1-3 对齐：固定 100/40/15，单抽约 64%/26%/10%，后续嫌平可在此调参或加 pity） */
 export const CARD_RARITY_WEIGHTS: Record<CardData['rarity'], number> = {
     '普通': 100,

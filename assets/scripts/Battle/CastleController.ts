@@ -7,6 +7,7 @@ import { AudioManager } from '../Core/AudioManager';
 import { RelicType } from '../Core/DataModels';
 import { RelicManager } from '../Core/RelicManager';
 import { MetaManager } from '../Core/MetaManager';
+import { OrbBalance } from '../Core/OrbBalance';
 import { cloneColor, shadeColor, Theme } from '../Core/ArtTheme';
 import { FxManager } from '../Core/FxManager';
 import { loadTex } from '../Core/TexCache';
@@ -71,6 +72,9 @@ export class CastleController extends Component {
         CastleController.instance = this;
         // ⚒ meta 永久升级「城堡加固」：血量上限加成（先于 currentHp 初始化，确保首局即生效）
         this.maxHp += MetaManager.getCastleBonus();
+        // ⚑ 锻造契约（方案C）：寒霜契约减益——生命上限 ×castleHpMult（软启动 ×0.9；无契约 ×1）。
+        //   在 meta 加成之后套乘：永久成长不吞契约代价，两段各算各的。
+        this.maxHp = Math.round(this.maxHp * OrbBalance.castleHpMult);
         this.currentHp = this.maxHp;
         // ⚒ meta 永久升级「战备护盾」：开局要塞护盾（先于 updateDisplay，首帧即显示）
         this.shield += MetaManager.getStartShieldBonus();

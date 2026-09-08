@@ -6,10 +6,11 @@
   "compilerOptions": {
     "strict": false
   },
-  /* 仓库根的自检脚本是纯 Node 工具（node --experimental-transform-types 直跑），
+  /* 仓库的自检脚本是纯 Node 工具（node --experimental-transform-types 直跑），
      引用了 assets 下的 .ts 源码，不属于 Cocos 构建产物，一律排除出引擎编译。
-     用 glob 而非逐条列举：新增自检文件自动覆盖，不会再漏（此前逐条列举漏了 5 个）。 */
+     Task 005（2026-09-07）后统一位于 tools/selfchecks/，用 glob 覆盖：
+     新增自检文件自动排除，不会再漏（此前逐条列举漏了 5 个）。 */
   "exclude": [
-    "selfcheck-*.ts"
+    "tools/selfchecks/*.ts"
   ]
 }

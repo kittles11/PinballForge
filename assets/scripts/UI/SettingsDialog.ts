@@ -130,15 +130,15 @@ export class SettingsDialog extends Component {
         panel.addComponent(UITransform).setContentSize(PANEL_WIDTH, PANEL_HEIGHT);
         const pg = panel.addComponent(Graphics);
         raisedButton(pg, PANEL_WIDTH, PANEL_HEIGHT, Theme.ui.panel, 18);
-        this.makeLabel('Title', 0, PANEL_HEIGHT / 2 - 56, 26, '⚙ 设 置', Theme.ui.gold, 480);
+        this.makeLabel('Title', 0, PANEL_HEIGHT / 2 - 56, 26, '设 置', Theme.ui.gold, 480);
         // 3) 音乐 / 音效开关行（左文案右开关；开关即时持久化 + 即时生效）
-        this.makeLabel('MusicLabel', -70, 60, 22, '🎵 音乐', Theme.ui.text, 260);
+        this.makeLabel('MusicLabel', -70, 60, 22, '音乐', Theme.ui.text, 260);
         this.createToggle('MusicToggle', 150, 60, () => {
             AudioManager.setMusicEnabled(!AudioManager.musicEnabled);
             MusicManager.applyEnabled(); // 即时生效：关 → 停播；开 → 非终局则恢复起播
             this.refreshToggleLabels();
         });
-        this.makeLabel('SfxLabel', -70, -30, 22, '🔔 音效', Theme.ui.text, 260);
+        this.makeLabel('SfxLabel', -70, -30, 22, '音效', Theme.ui.text, 260);
         this.createToggle('SfxToggle', 150, -30, () => {
             AudioManager.setSfxEnabled(!AudioManager.sfxEnabled);
             this.refreshToggleLabels(); // 播放入口首行门禁消费，无需额外处理

@@ -4,6 +4,8 @@
 >
 > 分析日期：2026-08-27。本文档为只读代码分析结果。本次未修改任何 `.ts`、`.scene`、`.prefab`、`.meta` 或配置文件。
 >
+> **📌 最后校准：2026-09-07**（见下方勘误第 8 条）。正文与当前代码不一致处，一律以勘误块与 `tools/selfchecks/` 自检为准。
+>
 > 证据原则：以下结论来自实际读取的源代码和 Cocos 序列化数据。无法由当前文件确认的内容明确写为“无法从当前代码确认”。
 >
 > **⚠️ 勘误（自检复核时点）——以下“未完成/潜在问题”已被修复，且全部纳入自检覆盖，请勿再按旧结论行动：**
@@ -14,6 +16,12 @@
 > 5. 遗物系统（P2-3）：修复**传奇藏宝箱空池软锁**（5 件收齐后第 5/10 关宝箱无可点卡 → 波次卡死，现回退常规三选一）；`MAX_RELICS` 显式上限 + `addRelic` 满池守卫；获得弹入跳字反馈、瓷片点击复习被动全文、占位展示 0/5。覆盖自检 `selfcheck-relics.ts`。另：`hit.wav` 实际被 MainScene/Orb/Peg 的 AudioSource 引用（本文档 §2/§10「未统一」记载已过时，勿删）；双扩展名 Prefab（LavaOrb/LightningOrb）已被删除，prefab 清单现为干净的 Enemy/Orb/Peg。
 > 6. Boss 特色行为（P2-1，设计稿 `docs/BOSS_DESIGN.md`）：章节轮换 C 破绽时刻（受击×2 窗口）/ B 君王诏令（召唤亲卫抢炮塔仇恨、死亡掉金）/ A 破阵坚盾（盾期炮伤×0.5，重炮剥 1 层/熔岩剥 2 层），第 1 章仅狂暴回复；`FIRE_TURRET` 载荷补可选 `funnelType`（倍率仍在发射端唯一乘入点）。覆盖自检 `selfcheck-boss-behaviors.ts`，全套 21 个自检脚本全绿。
 > 7. 精英词缀（P2-1 下半场，普通敌人多样化）：每关第 3 波精英（`WaveDef.isElite`，Boss 波不叠）随机挂 1 条按章解锁的词缀——🛡️铁壁(+2 盾)/⚡疾风(移速×1.35)/🩸血怒(2%回复·5s)/👑随从(死亡召 2 亲卫)，全部复用既有机制（护盾弧/moveSpeed/回复定时器/诏令召唤管线），血条上方常驻徽章 + 出生跳字宣告。覆盖自检 `selfcheck-elite-affixes.ts`，全套 22 个自检脚本全绿。
+> 8. **2026-09-07 全面校准（Task 004/005/006/007/008/009 交付）**：
+>    - 自检体系 35 个统一迁至 `tools/selfchecks/`，运行命令：`node --experimental-transform-types --import ./register-ts-hook.mjs tools/selfchecks/selfcheck-xxx.ts`（hook 与 tsconfig 排除规则已同步）；本文与根目录正文中所有 `selfcheck-*.ts` 路径均按此解读；
+>    - OrbController 拆分（OrbView 渲染契约 / OrbStuckGuard 卡球保底）、敌人击杀反馈包（HitStop+blast+连杀音高）、弹珠×敌人直伤、冰球补全（freezeVulnerability=0.25 + 商店上架 85 金）；
+>    - 商店二期：稀有位 ×2（命运重铸 / 镀金狂潮，第 3 章解锁，每波 50/50 掷定）+ 「刷新货架」25💰，`selfcheck-shop-ii.ts` 锁定；
+>    - 协同组合包第一批：碎冰（雷球×冰封 50 直伤+解冻）/ 寒霜导热（冰球入冰槽冻结 +2s）/ 殉爆（熔岩溅射×炸药钉，既有管线回归锁）/ 镀金钉赏金（镀金乘倍钉撞击 +5 金），`selfcheck-synergy.ts` 锁定；
+>    - §10「千行巨石」中 OrbController 一项已按上述拆分缓解；其余 §1-§11 结论请对照勘误与自检阅读。
 
 ## 1. 项目基本信息
 
@@ -277,7 +285,7 @@ MainScene
 2. **全局 director 监听未注销**：`Core/RelicManager.ts` 构造函数注册 `Director.EVENT_AFTER_SCENE_LAUNCH`，模块没有销毁路径。场景反复重载时可能保留全局引用/回调。建议确认 director API 的全局监听语义并提供一次性/可注销管理。
 3. **物理组需实际运行验证**：设置矩阵和 Prefab/Scene 的 `_group` 使用位掩码，Orb/PEG/WALL/FUNNEL 的碰撞关系若有一个位不一致会表现为穿透或无碰撞。建议使用 Cocos Physics Debug 检查。
 4. **固定路径脆弱**：`EnemyController`、`TurretController`、`OrbController`、HUD 和 `RelicManager` 多处依赖 `Canvas/...`。改名或换场景会导致静默失效。建议后续统一 Inspector 引用或集中路径常量。
-5. **动态 UI 尺寸/设计分辨率不一致风险**：Shop 使用 960×640 遮罩与 620×780 面板，而项目 designResolution 为720×1280；是否适配所有设备无法从静态文件确认。
+5. **~~动态 UI 尺寸/设计分辨率不一致风险~~ 已消解（Task 010，2026-09-07）**：全弹窗遮罩统一 2200×2200（fitHeight 视高恒 1280，任意纵横比铺满）；商店面板 620×1040 收敛于 720×1280 基线可视区；20:9 窄屏（可视宽 576 < 内容需求 660）由 `ShopDialog.applyScale` 整体等比缩小兜底（入场动效终点同步 uiScale）。详见 `docs/RESOLUTION_AUDIT.md` 与 `tools/selfchecks/selfcheck-resolution.ts`；HUD 层（发射器/城堡血条）真机抽验仍建议软启动前完成。
 
 ### P3：代码质量问题
 

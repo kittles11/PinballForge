@@ -1,10 +1,11 @@
 import {
-    _decorator, Component, Node, Label, UITransform, Graphics, Color, Vec3, tween, Tween,
+    _decorator, Component, Node, Label, UITransform, Graphics, Color, Vec3, tween, Tween, view,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
 import { GoldManager } from '../Core/GoldManager';
 import { DeckManager } from '../Core/DeckManager';
 import { CastleController } from '../Battle/CastleController';
+import { PegComponent, PegType } from '../Pinball/PegComponent';
 import { AudioManager } from '../Core/AudioManager';
 import { Analytics } from '../Core/Analytics';
 import { OrbType } from '../Core/DataModels';
@@ -19,6 +20,7 @@ const { ccclass, property } = _decorator;
 // ---------- 商品价格（金币） ----------
 const BUY_LIGHTNING_PRICE = 85;
 const BUY_LAVA_PRICE = 85;
+const BUY_FROST_PRICE = 85;    // 冰霜弹珠（2026-09-07 上架：与雷/熔同档，冰系构筑入口）
 const REMOVE_BASE_PRICE = 80;   // 删卡基础价（首次）
 const REMOVE_STEP_PRICE = 25;   // 删卡阶梯涨幅
 const REPAIR_CASTLE_PRICE = 50;
@@ -30,16 +32,40 @@ const REPAIR_CASTLE_HP = 40;
 /** 商品 ID：售罄集合标记用（限购 1 次） */
 const ITEM_LIGHTNING = 'lightning';
 const ITEM_LAVA = 'lava';
+const ITEM_FROST = 'frost';
 const ITEM_REPAIR = 'repair';
+/** 稀有商品 ①「命运重铸」（Task 007 商店二期）：整手牌球种随机重排（数量不变） */
+const ITEM_REROLL = 'reroll';
+/** 稀有商品 ②「镀金狂潮」（Task 007 商店二期）：本波再镀 2 颗普通钉为镀金乘倍钉（撞击 +5 金赏金） */
+const ITEM_GILDRUSH = 'gildrush';
+
+// ---------- 稀有商品（Task 007 商店二期） ----------
+const REROLL_PRICE = 120;
+/** 镀金狂潮单价（每次镀 2 颗） */
+const GILDRUSH_PRICE = 100;
+/** 镀金狂潮单次镀金钉数（与潮汐镀金遗物 TIDAL_GILD_COUNT 同款，2 颗） */
+const GILDRUSH_GILD_COUNT = 2;
+/** 稀有位解锁章节：第 3 章起上架（前两章货架保持 5 商品教学位） */
+const RARE_SLOT_UNLOCK_CHAPTER = 3;
+/** 「刷新货架」按钮价格：重掷两个稀有位的商品（50/50 掷定），不限购不叠加 */
+const REFRESH_PRICE = 25;
+/** 稀有商品展示文案（Task 007 商店二期；图标均取自 IconLib 已注册键） */
+const RARE_OFFER_TEXT: Record<string, { title: string; desc: string; icon: string }> = {
+    [ITEM_REROLL]: { title: '命运重铸', desc: '整手牌球种随机重排（数量不变）', icon: 'cards' },
+    [ITEM_GILDRUSH]: { title: '镀金狂潮', desc: '本波再镀 2 颗镀金钉（撞击 +5 金）', icon: 'coin' },
+};
 
 // ---------- 纯代码 UI 样式（无 Inspector 时可自动构建整套商店界面） ----------
 const PANEL_WIDTH = 620;
-const PANEL_HEIGHT = 780;
+const PANEL_HEIGHT = 1040;     // 2×3 基础货架 + 稀有位行（Task 007）：三行卡排 + 稀有行 + 继续钮，720×1280 竖屏放得下
 const BTN_WIDTH = 260;
 const BTN_HEIGHT = 145;
 const PANEL_COLOR = Theme.ui.panel;
-/** 全屏暗色半透明遮罩（防止点击穿透到背后钉板/发射器），默认铺满画布 960×640 */
-const OVERLAY_WH = 960;
+/** 📐 稀有位两卡横向坐标（Task 010 自检消费：与首二行 2 列同轨，保证 260 宽卡片互不重叠） */
+const RARE_X = [-140, 140];
+/** 全屏暗色半透明遮罩（防止点击穿透到背后钉板/发射器）：fitHeight 下可视高度恒 1280，
+ *  2200×2200 与 Settings/DailyTask/DeckView/SignIn 同规格，任何竖屏分辨率（含 20:9）都铺满 */
+const OVERLAY_WH = 2200;
 const OVERLAY_COLOR = Theme.ui.overlay;
 /** 按钮可用底色 */
 const BTN_ACTIVE_COLOR = Theme.ui.blueActive;
@@ -91,11 +117,12 @@ interface ShopButton {
 /**
  * 战后单页弹珠工坊（PinballForge）商店弹窗：挂载在 Canvas/UILayer/ShopDialog 节点上。
  * - 监听 SHOW_SHOP（RewardDialog 选完战后卡牌奖励后广播）打开商店，冻结发射并播放弹性入场动效；
- * - 单页 2×2 货架陈列 4 大核心商品：
+ * - 单页 2×3 货架陈列 5 大核心商品：
  *     ① 购买闪电弹珠（85💰，限购 1）→ 入卡组；
  *     ② 购买熔岩弹珠（85💰，限购 1）→ 入卡组；
- *     ③ 精简卡组 / 删普通球（80💰，每次 +25）→ 移出卡组，普通球为 0 时置灰不可点；
- *     ④ 城堡维修（50💰，限购 1）→ CastleController.heal(40)；
+ *     ③ 购买冰霜弹珠（85💰，限购 1）→ 入卡组（2026-09-07 补全上架：冰球此前只能靠战后卡牌获得）；
+ *     ④ 精简卡组 / 删普通球（80💰，每次 +25）→ 移出卡组，普通球为 0 时置灰不可点；
+ *     ⑤ 城堡维修（50💰，可重复购买，费用阶梯递增）→ CastleController.heal(40)；
  * - 「继续下一关」按钮：隐藏商店 → 广播 UI_MODAL_CHANGED false 恢复发射 → 广播 REWARD_SELECTED 开启下一关；
  * - 遗物已移至第 5、10 关击杀精英/Boss 后的【传奇藏宝箱】专属掉落，本商店不再售卖遗物；
  * - 每次成功购买播放金币扣除音效（AudioManager.playFire(2) 双音 Ching）并刷新各按钮可用状态（置灰 / 红色提示）。
@@ -116,6 +143,9 @@ export class ShopDialog extends Component {
     buyLavaBtn: Node | null = null;
 
     @property(Node)
+    buyFrostBtn: Node | null = null;
+
+    @property(Node)
     removeNormalBtn: Node | null = null;
 
     @property(Node)
@@ -132,14 +162,21 @@ export class ShopDialog extends Component {
 
     private _buyLightning: ShopButton | null = null;
     private _buyLava: ShopButton | null = null;
+    private _buyFrost: ShopButton | null = null;
     private _removeNormal: ShopButton | null = null;
     private _repairCastle: ShopButton | null = null;
     private _continue: ShopButton | null = null;
+    /** 稀有位商品卡 ×2（Task 007 商店二期）：第 3 章解锁，每波 50/50 掷定商品 */
+    private _rareCards: (ShopButton | null)[] = [null, null];
+    /** 「刷新货架」单行按钮（Task 007）：重掷稀有位商品，25💰 每次 */
+    private _refreshBtn: ShopButton | null = null;
+    /** 本波稀有位商品（50/50 掷定的两种排列） */
+    private _rareOffers: string[] = [ITEM_REROLL, ITEM_GILDRUSH];
     /** 全屏暗色半透明遮罩节点（最底层，拦截穿透到背后钉板/发射器的触摸） */
     private _overlay: Node | null = null;
 
-    /** 本波已售罄商品 ID 集合（限购 1 次的球 / 维修等） */
-    private _soldItems = new Set<string>();
+    /** 本次开店是否已购买（2026-09-07 用户拍板：每次开店全场商品合计限购 1 件，下次开店重置） */
+    private _boughtThisVisit = false;
 
     /** SHOW_SHOP 监听是否已注册（幂等） */
     private _listening = false;
@@ -147,6 +184,8 @@ export class ShopDialog extends Component {
     private _ready = false;
     /** 展示中标记（同 RewardDialog._showing）：防启动期失活导致的 start 推迟自吞首次展示 */
     private _showing = false;
+    /** 📐 面板整体缩放（Task 010 多分辨率）：窄屏（20:9 等）可视宽 < 面板宽时等比缩小，钳制 ≤1 */
+    private _uiScale = 1;
 
     /** 监听注册提前到 onLoad：场景启动时 DailyTaskDialog 的 closeAllModals() 会把弹窗节点
      *  失活（EVENT_AFTER_SCENE_LAUNCH），若依赖 start() 注册，节点失活后 start 永不执行、
@@ -188,9 +227,15 @@ export class ShopDialog extends Component {
         this.buildUI();
         this.bindButton(this._buyLightning, this.onBuyLightning);
         this.bindButton(this._buyLava, this.onBuyLava);
+        this.bindButton(this._buyFrost, this.onBuyFrost);
         this.bindButton(this._removeNormal, this.onRemoveNormal);
         this.bindButton(this._repairCastle, this.onRepairCastle);
         this.bindButton(this._continue, this.onContinue);
+        this.bindButton(this._refreshBtn, this.onRefreshRare);
+        this._rareCards.forEach((card, i) => {
+            const id = this._rareOffers[i] ?? ITEM_REROLL;
+            this.bindButton(card, id === ITEM_REROLL ? this.onBuyReroll : this.onBuyGildRush);
+        });
     }
 
     /** SHOW_SHOP 回调：打开商店（冻结发射）并播放弹性入场动效 */
@@ -199,6 +244,10 @@ export class ShopDialog extends Component {
             return;
         }
         this._showing = true; // 先置位再激活：推迟执行的 start() 默认隐藏不得吞掉本次展示
+        // 📐 Task 010：先按当前可视宽算整体缩放（窄屏 20:9 等比缩小防裁边），再掷稀有位
+        this.applyScale(view.getVisibleSize().width);
+        this.rollRareOffers(); // ⭐ Task 007：每次开店重掷稀有位商品（50/50）
+        this._boughtThisVisit = false; // 每次开店重置全场限购：新店新额度
         // ★ 结算链加固（2026-09-04 1-3 回归）：UI 构建/刷新段整体异常隔离——refreshUi 抛错
         //   绝不能吞掉后面的「冻结发射 + 激活」，否则商店无声缺席 → REWARD_SELECTED 永不发出
         //   → 第 3/6/9 关选完卡永久卡死。素面板商店（错误见日志）好过无声死局。
@@ -219,9 +268,6 @@ export class ShopDialog extends Component {
 // ---------- 购买 / 按钮逻辑 ----------
 
     private onBuyLightning(): void {
-        if (this._soldItems.has(ITEM_LIGHTNING)) {
-            return; // 已售罄：限购 1 次
-        }
         if (!DeckManager.instance?.canAddOrb()) {
             this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
             return;
@@ -232,15 +278,22 @@ export class ShopDialog extends Component {
     }
 
     private onBuyLava(): void {
-        if (this._soldItems.has(ITEM_LAVA)) {
-            return; // 已售罄：限购 1 次
-        }
         if (!DeckManager.instance?.canAddOrb()) {
             this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
             return;
         }
             this.purchase(BUY_LAVA_PRICE, ITEM_LAVA, '已购买熔岩弹珠，永久加入卡组！', () => {
             DeckManager.instance?.addOrbToDeck(OrbType.Lava);
+        });
+    }
+
+    private onBuyFrost(): void {
+        if (!DeckManager.instance?.canAddOrb()) {
+            this.showMessage(`牌库已满（${DeckManager.instance?.getDeckSize() ?? 8}/${DeckManager.instance?.maxDeckSize ?? 8}），请先删卡腾位！`, false);
+            return;
+        }
+        this.purchase(BUY_FROST_PRICE, ITEM_FROST, '已购买冰霜弹珠，永久加入卡组！', () => {
+            DeckManager.instance?.addOrbToDeck(OrbType.Frost);
         });
     }
 
@@ -267,6 +320,96 @@ export class ShopDialog extends Component {
         });
     }
 
+    // ---------- 稀有位（Task 007 商店二期：第 3 章解锁 + 50/50 掷定 + 25💰 刷新） ----------
+
+    /** 稀有位是否已解锁（第 RARE_SLOT_UNLOCK_CHAPTER 章起） */
+    private rareUnlocked(): boolean {
+        return LevelManager.currentChapter >= RARE_SLOT_UNLOCK_CHAPTER;
+    }
+
+    /** 每次开店重掷稀有位商品：50/50 掷定两种排列之一（两商品不同，位序随机）。
+     *  ★ 掷定后按新位序重绑点击处理器（createCard 首绑的是当时的位序，换位后必须重绑防点错商品）。 */
+    private rollRareOffers(): void {
+        const first = Math.random() < 0.5 ? ITEM_REROLL : ITEM_GILDRUSH;
+        this._rareOffers = first === ITEM_REROLL
+            ? [ITEM_REROLL, ITEM_GILDRUSH]
+            : [ITEM_GILDRUSH, ITEM_REROLL];
+        this._rareOffers.forEach((itemId, i) => {
+            this.bindButton(this._rareCards[i],
+                itemId === ITEM_REROLL ? this.onBuyReroll : this.onBuyGildRush);
+        });
+    }
+
+    /** 「刷新货架」：重掷稀有位商品 + 重置本波售罄标记，每次 25💰 */
+    private onRefreshRare(): void {
+        if (!this.rareUnlocked()) {
+            return;
+        }
+        this.purchase(REFRESH_PRICE, null, '货架已刷新！', () => {
+            this.rollRareOffers();
+            // 刷新语义：重掷商品位（全场限购下刷新仅在未购买时可用，重掷商品天然可买）
+        });
+    }
+
+    /** ⭐ 命运重铸：整手牌球种随机重排（数量不变，DeckManager 单一真源） */
+    private onBuyReroll(): void {
+        this.purchase(REROLL_PRICE, ITEM_REROLL, '整手牌已重铸！', () => {
+            DeckManager.instance?.rerollDeckComposition();
+        });
+    }
+
+    /** ⭐ 镀金狂潮：本波再镀 GILDRUSH_GILD_COUNT 颗普通钉（与潮汐镀金遗物同管线） */
+    private onBuyGildRush(): void {
+        this.purchase(GILDRUSH_PRICE, ITEM_GILDRUSH, '镀金狂潮已生效！', () => {
+            // 商店在 UILayer、钉子在 PegboardLayer：跨层全局搜索（PegComponent 静态方法同惯例）
+            const gilded = PegComponent.gildRandomNormalPegs(GILDRUSH_GILD_COUNT);
+            if (gilded.length === 0) {
+                this.showMessage('场上没有普通钉可镀（下一波再来！）', false);
+            }
+        });
+    }
+
+    /** 刷新稀有位商品卡（Task 007）：未解锁整卡隐藏；本波已购显示已售罄；金币不足标红 */
+    private refreshRareCards(gold: number): void {
+        if (!this.rareUnlocked()) {
+            for (const card of this._rareCards) {
+                if (card?.node?.isValid) {
+                    card.node.active = false;
+                }
+            }
+            if (this._refreshBtn?.node?.isValid) {
+                this._refreshBtn.node.active = false;
+            }
+            return;
+        }
+        this._rareOffers.forEach((itemId, i) => {
+            const card = this._rareCards[i];
+            if (!card?.node?.isValid) {
+                return;
+            }
+            card.node.active = true;
+            const text = RARE_OFFER_TEXT[itemId];
+            const price = this.finalPrice(itemId === ITEM_REROLL ? REROLL_PRICE : GILDRUSH_PRICE);
+            this.refreshItemCard(card, itemId, gold >= price && !this._boughtThisVisit, text.title, text.desc, price);
+        });
+        // 「刷新货架」按钮：价格显示 + 金币不足 / 已购置灰
+        if (this._refreshBtn?.node?.isValid) {
+            this._refreshBtn.node.active = true;
+            const pRefresh = this.finalPrice(REFRESH_PRICE);
+            this.setButtonEnabled(this._refreshBtn, gold >= pRefresh && !this._boughtThisVisit);
+            if (this._refreshBtn.label?.isValid) {
+                this._refreshBtn.label.string = '刷新货架';
+            }
+            if (this._refreshBtn.btnLabel?.isValid) {
+                this._refreshBtn.btnLabel.string = this._boughtThisVisit
+                    ? '【已售罄】'
+                    : gold >= pRefresh
+                        ? `${pRefresh} 刷新稀有商品`
+                        : `${pRefresh} 刷新（金币不足）`;
+            }
+        }
+    }
+
     /** 当前删卡价格（金币）：80 + 已删次数 × 25（首次 80，第二次 105，第三次 130…） */
     private removePrice(): number {
         return REMOVE_BASE_PRICE + ShopDialog.removeCardCount * REMOVE_STEP_PRICE;
@@ -288,6 +431,9 @@ export class ShopDialog extends Component {
      * 金币不足时不扣款，给出红色提示。
      */
     private purchase(price: number, soldId: string | null, successMsg: string, apply: () => void): void {
+        if (this._boughtThisVisit) {
+            return; // 本次开店已购 1 件：全场限购（按钮已置灰，此处兜底防线）
+        }
         price = this.finalPrice(price); // 商道折扣：实付价（与 refreshUi 显示价一致）
         const gold = GoldManager.instance;
         if (!gold || gold.currentGold < price) {
@@ -300,9 +446,7 @@ export class ShopDialog extends Component {
             this.refreshUi();
             return;
         }
-        if (soldId) {
-            this._soldItems.add(soldId); // 商品售罄：限购 1 次
-        }
+        this._boughtThisVisit = true; // 全场限购：本次开店已购 1 件，其余商品全部置灰
         apply();
         // 附录 A shop_buy：商店转化与定价埋点（删卡无商品 id，固定 remove_card；goldBalance 为扣款后余额）
         Analytics.track('shop_buy', { itemId: soldId ?? 'remove_card', price, goldBalance: gold.currentGold });
@@ -341,18 +485,22 @@ export class ShopDialog extends Component {
         const deckSize = DeckManager.instance?.getDeckSize() ?? 0;
         const deckFull = deckSize >= deckCapacity;
         const deckFullSuffix = deckFull ? ` (${deckSize}/${deckCapacity})` : '';
-        // 闪电弹珠：限购 1 次，售罄则置灰售罄文案（价格经「商道」折扣，与 purchase 实付一致）
+        // 闪电弹珠（价格经「商道」折扣，与 purchase 实付一致）；全场限购：已购 1 件则全部置灰
         const pLight = this.finalPrice(BUY_LIGHTNING_PRICE);
-        this.refreshItemCard(this._buyLightning, ITEM_LIGHTNING, gold >= pLight && !deckFull,
+        this.refreshItemCard(this._buyLightning, ITEM_LIGHTNING, gold >= pLight && !deckFull && !this._boughtThisVisit,
             '闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`, pLight, deckFull);
         // 熔岩弹珠
         const pLava = this.finalPrice(BUY_LAVA_PRICE);
-        this.refreshItemCard(this._buyLava, ITEM_LAVA, gold >= pLava && !deckFull,
+        this.refreshItemCard(this._buyLava, ITEM_LAVA, gold >= pLava && !deckFull && !this._boughtThisVisit,
             '熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`, pLava, deckFull);
-        // 精简卡组：不限购，但需有普通球可删且金币充足；价格随删卡次数阶梯上涨（同样吃商道折扣）
+        // 冰霜弹珠（2026-09-07 上架：售罄 / 牌库满置灰，与闪电/熔岩同管线）
+        const pFrost = this.finalPrice(BUY_FROST_PRICE);
+        this.refreshItemCard(this._buyFrost, ITEM_FROST, gold >= pFrost && !deckFull && !this._boughtThisVisit,
+            '冰霜弹珠', `入任意槽冰封全场 4 秒，冰封中的敌人受伤 +25%`, pFrost, deckFull);
+        // 精简卡组：需有普通球可删且金币充足；价格随删卡次数阶梯上涨（同样吃商道折扣）
         const normalCount = DeckManager.instance?.getOrbCount(OrbType.Normal) ?? 0;
         const removePrice = this.finalPrice(this.removePrice());
-        this.setButtonEnabled(this._removeNormal, normalCount > 0 && gold >= removePrice);
+        this.setButtonEnabled(this._removeNormal, normalCount > 0 && gold >= removePrice && !this._boughtThisVisit);
         if (this._removeNormal?.label?.isValid) {
             this._removeNormal.label.string = '精简卡组';
             this._removeNormal.label.color = this._removeNormal.enabled ? TEXT_COLOR : BTN_TEXT_DISABLED_COLOR;
@@ -371,6 +519,8 @@ export class ShopDialog extends Component {
         const pRepair = this.finalPrice(this.repairPrice());
         this.refreshItemCard(this._repairCastle, null, castleAlive && gold >= pRepair,
             '城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命（费用递增）`, pRepair);
+        // ⭐ 稀有位（Task 007 商店二期）：第 3 章解锁，50/50 掷定，25💰 可刷新
+        this.refreshRareCards(gold);
     }
 
     /**
@@ -381,25 +531,25 @@ export class ShopDialog extends Component {
         if (!btn || !btn.label?.isValid) {
             return;
         }
-        const sold = this._soldItems.has(soldId);
+        const bought = this._boughtThisVisit; // 全场限购：任一商品购后全部置灰显示售罄
         const capacity = DeckManager.instance?.maxDeckSize ?? 8;
         const size = DeckManager.instance?.getDeckSize() ?? 0;
         if (btn.descLabel?.isValid) {
             btn.descLabel.string = sub;
         }
         if (btn.btnLabel?.isValid) {
-            btn.btnLabel.string = sold
+            btn.btnLabel.string = bought
                 ? '【已售罄】'
                 : deckFull
                     ? `【牌库已满 (${size}/${capacity})】`
                     : `💰 ${price} 购买`;
         }
         btn.label.string = title;
-        this.setButtonEnabled(btn, !sold && !deckFull && affordable);
-        if (!sold && !affordable && btn.btnLabel?.isValid) {
-            btn.btnLabel.color = MSG_ERROR_COLOR; // 金币不足 / 条件不满足 → 价格标红
-        } else if (!sold && btn.btnLabel?.isValid) {
-            btn.btnLabel.color = TEXT_COLOR; // 恢复默认副题色
+        this.setButtonEnabled(btn, !bought && !deckFull && affordable);
+        if (btn.btnLabel?.isValid) {
+            btn.btnLabel.color = bought
+                ? BTN_TEXT_DISABLED_COLOR // 购后全场售罄：灰字（并修复此前售罄态颜色残留红色的旧问题）
+                : affordable ? TEXT_COLOR : MSG_ERROR_COLOR;
         }
     }
 
@@ -439,24 +589,47 @@ export class ShopDialog extends Component {
         mountIcon(this.node, 'coin', 24, Theme.ui.gold, -88, 286);
         this.messageLabel = this.ensureLabel('ShopMessageLabel', 0, 242, 20, '', 520);
 
-        // ---------- 单页 2×2 货架：闪电 / 熔岩 / 删卡 / 修城（无 Tab 切换） ----------
-        // 商品卡 2×2：第0/1张在上排、第2/3张在下排；左右列各占一半宽度
-        const cardPos = (col: number, row: number) => ({ x: col === 0 ? -140 : 140, y: row === 0 ? 70 : -90 });
+        // ---------- 单页 2×3 货架：闪电 / 熔岩 / 冰霜 / 删卡 / 修城（无 Tab 切换） ----------
+        // 商品卡 2 列 × 3 行：第 5 格（维修）独占第三行左位，右位由稀有行的「刷新货架」补位；行距 180，面板已加高至 1040
+        const cardPos = (col: number, row: number) => ({ x: col === 0 ? -140 : 140, y: [110, -70, -250][row] });
         this._buyLightning = this.createCard(this.buyLightningBtn, 'BuyLightningBtn',
             cardPos(0, 0).x, cardPos(0, 0).y, '闪电弹珠', `购买后永久加入牌库，发射瞬间扇形散射`,
             'bolt', BTN_ACTIVE_COLOR);
         this._buyLava = this.createCard(this.buyLavaBtn, 'BuyLavaBtn',
             cardPos(1, 0).x, cardPos(1, 0).y, '熔岩弹珠', `双倍重力重压砸击，每次撞钉 +60 能量`,
             'flame', BTN_ACTIVE_COLOR);
+        this._buyFrost = this.createCard(this.buyFrostBtn, 'BuyFrostBtn',
+            cardPos(0, 1).x, cardPos(0, 1).y, '冰霜弹珠', `入任意槽冰封全场 4 秒，冰封中的敌人受伤 +25%`,
+            'snow', BTN_ACTIVE_COLOR);
         this._removeNormal = this.createCard(this.removeNormalBtn, 'RemoveNormalBtn',
-            cardPos(0, 1).x, cardPos(0, 1).y, '精简卡组', `从卡组移除 1 颗普通白球腾出牌位`,
+            cardPos(1, 1).x, cardPos(1, 1).y, '精简卡组', `从卡组移除 1 颗普通白球腾出牌位`,
             'trash', BTN_ACTIVE_COLOR);
         this._repairCastle = this.createCard(this.repairCastleBtn, 'RepairCastleBtn',
-            cardPos(1, 1).x, cardPos(1, 1).y, '城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`,
+            cardPos(0, 2).x, cardPos(0, 2).y, '城堡维修', `为城堡恢复 ${REPAIR_CASTLE_HP} 点生命`,
             'castle', BTN_ACTIVE_COLOR);
 
-        // 继续下一关按钮（置底，宽 420 高 52，Y:-320，不与下边缘重叠）
-        this._continue = this.ensureButton(this.continueBtn, 'ContinueBtn', 0, -320,
+        // ⭐ 稀有位行（Task 007 商店二期）：两稀有卡占 -140/+140（与首二行 2 列同轨，跨距 620）；
+        //    「刷新货架」落第三行右留白位（此前 x=0 三卡 260 宽两两重叠 120px 且总跨 780>面板 620）；
+        //    未解锁章节整行隐藏（refreshRareCards 控制 active）
+        const rarePos = (col: number) => ({ x: RARE_X[col], y: -390 });
+        const rareDefs: { id: string; name: string; handler: () => void }[] = [
+            { id: ITEM_REROLL, name: 'RareRerollCard', handler: this.onBuyReroll },
+            { id: ITEM_GILDRUSH, name: 'RareGildRushCard', handler: this.onBuyGildRush },
+        ];
+        rareDefs.forEach((def, i) => {
+            const text = RARE_OFFER_TEXT[def.id];
+            this._rareCards[i] = this.createCard(null, def.name,
+                rarePos(i).x, rarePos(i).y, text.title, text.desc,
+                text.icon, BTN_ACTIVE_COLOR, this.node);
+            this.bindButton(this._rareCards[i], def.handler);
+        });
+        this._refreshBtn = this.createCard(null, 'RareRefreshCard',
+            140, -250, '刷新货架', '重掷两个稀有位商品',
+            'gear', CONTINUE_COLOR, this.node);
+        this.bindButton(this._refreshBtn, this.onRefreshRare);
+
+        // 继续下一关按钮（置底，宽 420 高 52；Y:-470 随面板加高（1040）下移，让位稀有位行不重叠）
+        this._continue = this.ensureButton(this.continueBtn, 'ContinueBtn', 0, -470,
             '继续下一关', 420, 52, CONTINUE_COLOR);
         if (this._continue?.node?.isValid) {
             mountIcon(this._continue.node, 'arrowRight', 22, Theme.white, -100, 0);
@@ -667,7 +840,16 @@ export class ShopDialog extends Component {
         btn.node.on(Node.EventType.TOUCH_END, handler, this);
     }
 
-    /** 弹窗浮现动效：整体 0.8 → 1.06 → 1 弹性放大（与 RewardDialog 保持一致手感） */
+    /** 📐 面板整体缩放（Task 010 多分辨率）：fitHeight 下可视宽 = 720×(1280/屏高)，
+     *  20:9 竖屏仅 ≈576——商店内容需求 660（面板 620 / 卡跨度 660）超出可视宽会裁边。
+     *  整体等比缩小到刚好放下（钳制 ≤1，720×1280 基线不受影响）；输入用 openShop 已算好的可视宽。 */
+    private applyScale(visW: number): void {
+        const need = Math.max(PANEL_WIDTH, 2 * (Math.abs(RARE_X[1]) + BTN_WIDTH / 2)) + 40; // 面板宽 / 稀有卡跨度 取大者 + 两侧 20px 呼吸
+        this._uiScale = Math.min(1, visW / need);
+        this.node.setScale(this._uiScale, this._uiScale, 1);
+    }
+
+    /** 弹窗浮现动效：整体 0.8 → 1.06 → uiScale 弹性放大（与 RewardDialog 保持一致手感） */
     private playPopAnimation(): void {
         const node = this.node;
         if (!node?.isValid) {
@@ -677,7 +859,7 @@ export class ShopDialog extends Component {
         node.setScale(0.8, 0.8, 1);
         tween(node)
             .to(0.09, { scale: new Vec3(1.06, 1.06, 1) })
-            .to(0.06, { scale: new Vec3(1, 1, 1) })
+            .to(0.06, { scale: new Vec3(this._uiScale, this._uiScale, 1) })
             .start();
     }
 }

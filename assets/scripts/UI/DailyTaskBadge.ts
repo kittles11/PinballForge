@@ -118,13 +118,8 @@ export class DailyTaskBadge extends Component {
     /** 手指滑出节点（取消触摸）：不触发点击 */
     private onTouchCancel(): void {}
 
-    /** UI_MODAL_CHANGED：结算/奖励/商店/面板开合时同步互斥守卫 */
+    /** UI_MODAL_CHANGED：结算/奖励/商店/面板开合时同步互斥守卫（卡 true 由 onTouchEnd 现实纠偏自愈） */
     private onModalChanged(open: boolean): void {
-        if (open) {
-            // [诊断] 谁在会话早期把 modal 置 true 又不置 false，导致徽章永久失联（2026-09-03 排查）
-            console.warn('[诊断] TaskBadge 收到 MODAL=true，调用栈：',
-                (new Error().stack ?? '').split('\n').slice(1, 5).join('\n'));
-        }
         this._modalOpen = open === true;
     }
 

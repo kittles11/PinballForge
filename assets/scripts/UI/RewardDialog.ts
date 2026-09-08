@@ -9,7 +9,8 @@ import { PegComponent } from '../Pinball/PegComponent';
 import { DeckManager } from '../Core/DeckManager';
 import { OrbController } from '../Pinball/OrbController';
 import { OrbBalance } from '../Core/OrbBalance';
-import { CardData, CARD_DATABASE, META_UNLOCKED_CARDS, drawWeightedCards, enforceRarityFloor, OrbType, RelicType } from '../Core/DataModels';
+import { CardData, CARD_DATABASE, META_UNLOCKED_CARDS, drawWeightedCards, enforceRarityFloor, OrbType, RelicType, CONTRACTS, CONTRACT_UNLOCK_LEVEL, ContractManager } from '../Core/DataModels';
+import type { ContractId } from '../Core/DataModels';
 import { MetaManager } from '../Core/MetaManager';
 import type { MetaUpgradeId } from '../Core/MetaManager';
 import { LevelManager, WAVES_PER_LEVEL } from '../Core/LevelManager';
@@ -76,7 +77,8 @@ const REWARD_CARD_POOL: RewardCard[] = CARD_DATABASE.map((c) => ({
 /**
  * 战后肉鸽三选一卡牌奖励弹窗：挂载在 UILayer/RewardDialog 节点上。
  * - 监听 SHOW_REWARDS：随机展示 3 张不重复奖励卡牌；
- * - 玩家点击任意卡牌：应用强化 → 隐藏弹窗 → 广播 REWARD_SELECTED 让 WaveManager 开启下一波。
+ * - 点击卡牌 → 仅「预选」（高亮 + 确认按钮），按「确认选择」才应用强化 → 隐藏弹窗 →
+ *   广播 REWARD_SELECTED 让 WaveManager 开启下一波（2026-09-07 用户拍板：防误点，两步确认）。
  */
 @ccclass('RewardDialog')
 export class RewardDialog extends Component {
@@ -104,12 +106,18 @@ export class RewardDialog extends Component {
     private _showing = false;
     /** 当前是否为【传奇藏宝箱】模式（第 5 / 10 关）：true 时展示 2 张未拥有遗物免费二选一 */
     private _chestMode = false;
+    /** ⚑ 锻造契约模式（方案C）：true 时三张卡展示 3 条契约，选择走 selectContract */
+    private _contractMode = false;
     /** 宝箱模式当前展示的 2 个未拥有遗物（与 cardA/cardB 一一对应；cardC 隐藏） */
     private _chestRelics: RelicType[] = [];
     /** 📺 本关「换一批」广告是否已用（每关一次；showRewards() 常规重入时重置） */
     private _adRefreshUsed = false;
     /** 📺 换一批按钮节点（updateRefreshBtn 幂等创建复用；宝箱模式 / 已用时隐藏） */
     private _adRefreshBtn: Node | null = null;
+    /** ☑️ 当前预选的卡牌下标（-1 = 未选；两步确认：点卡只预选，按「确认选择」才结算） */
+    private _pendingIndex = -1;
+    /** ☑️ 「确认选择」按钮节点（ensureConfirmBtn 幂等创建复用；无预选时隐藏） */
+    private _confirmBtn: Node | null = null;
 
     /** 监听注册提前到 onLoad：场景启动时 DailyTaskDialog 的 closeAllModals() 会把弹窗节点
      *  失活（EVENT_AFTER_SCENE_LAUNCH），若依赖 start() 注册，节点失活后 start 永不执行、
@@ -166,6 +174,9 @@ export class RewardDialog extends Component {
         this._showing = true;
         console.log('[Reward] 收到 SHOW_REWARDS：准备战后奖励弹窗');
         this._selecting = false;
+        this._contractMode = false; // ⚑ 契约模式随每次展示复位（showContractOffer 内再置 true）
+        this._chestMode = false; // ⚑ 同上：上一关宝箱遗留 true 会污染下方契约门（!_chestMode）判定
+        this.clearPendingSelection(); // ☑️ 重置两步确认：新弹窗无预选、确认按钮隐藏
         // ★ 双保险：弹窗展示瞬间再回收一次场上残余弹珠（WaveManager 已在派发前回收过），
         //    确保任何来源（商店 / 直接触发）打开弹窗时屏幕都绝对平稳、无残球撞钉发声。
         try {
@@ -197,12 +208,22 @@ export class RewardDialog extends Component {
             //   ★ 软锁修复：5 件遗物收集齐后（第 3 章起必然到达）unowned 为空 → 两张卡全隐藏 →
             //     弹窗无可点目标、REWARD_SELECTED 永不发出、游戏卡死。空池时回退常规卡牌三选一。
             const unownedCount = ALL_RELIC_TYPES.filter((t) => !RelicManager.hasRelic(t)).length;
-            if (levelCleared && (LevelManager.currentLevel === 5 || LevelManager.currentLevel === 10) && unownedCount > 0) {
+            // ⚑ 锻造契约（方案C）：解锁（通关第 2 关）且本局未立约 → 每关最后一波（非 5/10 宝箱关）
+            //   改为契约三选一。判定先于藏宝箱（宝箱关免契约），与宝箱互斥、每局至多一次。
+            const contractGate = !this._chestMode && LevelManager.currentWave >= WAVES_PER_LEVEL
+                && ContractManager.unlocked
+                && LevelManager.currentLevel !== 5 && LevelManager.currentLevel !== 10
+                && OrbBalance.activeContract === null;
+            if (contractGate) {
+                this.showContractOffer();
+                chestShown = true;
+            } else if (levelCleared && (LevelManager.currentLevel === 5 || LevelManager.currentLevel === 10) && unownedCount > 0) {
                 this.showRelicChest();
                 chestShown = true;
             } else {
                 // 常规关卡 / 中途波次：战后卡牌三选一
                 this._chestMode = false;
+                this._contractMode = false;
                 this.updateRefreshBtn(); // 📺 换一批按钮：仅三选一模式显示（宝箱模式隐藏）
                 // ★ 卡库按稀有度加权抽三（100/40/15）：史诗球卡低频、普通救急卡高频；
                 //   无放回不重复；牌库满时池已滤掉 AddOrb（史诗层为空自动退化）
@@ -241,6 +262,7 @@ export class RewardDialog extends Component {
         } catch (e) {
             console.error('[Reward] 奖励数据准备异常，降级展示空白卡（点任意卡仍可推进流程）', e);
             this._chestMode = false;
+            this._contractMode = false;
             this._currentRewards = [];
         }
         if (chestShown) {
@@ -276,6 +298,115 @@ export class RewardDialog extends Component {
         this.playPopAnimation();
     }
 
+    /**
+     * ⚑ 锻造契约（方案C）三选一：三张卡展示 3 条契约，复用常规两步确认链
+     * （点卡预选 → 「确认选择」→ selectReward 契约分支）。选择后 OrbBalance.applyContract 立约，
+     * 推进链与常规选卡完全同款（第 3/6/9 关转商店、其余直接下一关）。
+     */
+    private showContractOffer(): void {
+        this._chestMode = false;
+        this._contractMode = true;
+        this.updateRefreshBtn(); // 换一批按钮：仅常规三选一显示（契约模式隐藏）
+        this.setContractCard(this.cardA, 0);
+        this.setContractCard(this.cardB, 1);
+        this.setContractCard(this.cardC, 2);
+        if (this.cardC?.isValid) {
+            this.cardC.active = true; // 契约恒三条：三张卡全显示
+        }
+        Analytics.track('contract_offer', {
+            chapter: LevelManager.currentChapter,
+            offers: CONTRACTS.map((c) => c.id),
+        });
+        console.log(`[Reward] 契约三选一（通关第 ${CONTRACT_UNLOCK_LEVEL} 关解锁）：${CONTRACTS.map((c) => c.title).join(' / ')}`);
+        EventBus.emit(GameEvents.UI_MODAL_CHANGED, true); // 弹窗打开：冻结发射
+        this.node.active = true;
+        this.playPopAnimation();
+    }
+
+    /** 契约卡填充：把第 index 条契约渲染到 card 节点（版式与藏宝箱遗物卡同款，深底 + 金框 + 契约图标） */
+    private setContractCard(card: Node | null, index: number): void {
+        if (!card?.isValid) {
+            return;
+        }
+        const contract = CONTRACTS[index];
+        if (!contract) {
+            card.active = false;
+            return;
+        }
+        card.active = true;
+        this.clearCardIcons(card);
+        const label = card.getComponentInChildren(Label);
+        if (label) {
+            // 框窗文字区（与常规卡同一版式）
+            const transform = label.getComponent(UITransform) || label.addComponent(UITransform);
+            transform.setContentSize(CARD_TEXT_W, CARD_TEXT_H);
+            label.node.setPosition(0, CARD_TEXT_Y, 0);
+            label.overflow = Label.Overflow.SHRINK;
+            label.enableWrapText = true;
+            label.fontSize = 14;
+            label.lineHeight = 19;
+            label.horizontalAlign = Label.HorizontalAlign.CENTER;
+            label.verticalAlign = Label.VerticalAlign.CENTER;
+            label.color = Theme.ui.text;
+            label.string = `【锻造契约】\n${contract.title}\n${contract.boon}\n（代价：${contract.bane}）`;
+        }
+        // 竖版卡面：深底 + 史诗金框（整局定义 Build Around，用最高规格视觉）→ 卡框贴图加载成功后盖过矢量层
+        const tf = card.getComponent(UITransform) ?? card.addComponent(UITransform);
+        tf.setContentSize(CARD_W, CARD_H);
+        const g = card.getComponent(Graphics) ?? card.addComponent(Graphics);
+        g.clear();
+        g.fillColor = Theme.ui.panelOpaque;
+        g.roundRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 16);
+        g.fill();
+        cardFrame(g, CARD_W, CARD_H, 2);
+        attachEpicGlow(card, CARD_W, CARD_H);
+        // 契约矢量图标（框窗上方居中，颜色随契约流派）
+        mountIcon(card, contract.icon, 36, this.contractAccent(contract.id), 0, CARD_TEXT_Y + CARD_TEXT_H / 2 + 14);
+        this.attachCardFrameImage(card, 2);
+    }
+
+    /** 契约主色：雷霆=电光 / 熔炉=熔岩橙红 / 寒霜=霜白（全部取自 ArtTheme 语义色，零新色值） */
+    private contractAccent(id: ContractId): Color {
+        if (id === 'contract_thunder') {
+            return Theme.orb.lightning;
+        }
+        if (id === 'contract_forge') {
+            return Theme.orb.lava;
+        }
+        return Theme.orb.frost;
+    }
+
+    /** ⚑ 契约选择（两步确认第二步）：立约生效后走与常规选卡完全同款的关卡分流转场 */
+    private selectContract(index: number): void {
+        if (this._selecting || !this.node?.isValid) {
+            return;
+        }
+        const contract = CONTRACTS[index];
+        if (!contract) {
+            return;
+        }
+        this._selecting = true;
+        try {
+            Analytics.track('contract_pick', { pickedId: contract.id });
+            OrbBalance.applyContract(contract.id);
+            console.log(`[Reward] 立约【${contract.title}】：${contract.boon}；代价：${contract.bane}（验证期减半生效）`);
+            // 新回合钉板复活（与常规选卡一致）
+            PegComponent.resetAllPegs();
+            // ☆ 关卡分流转场（与 selectReward 完全同款）：第 3/6/9 关最后一波转商店，其余直接推进
+            const level = LevelManager.currentLevel;
+            const levelCleared = LevelManager.currentWave >= WAVES_PER_LEVEL;
+            if (levelCleared && (level === 3 || level === 6 || level === 9)) {
+                EventBus.emit(GameEvents.SHOW_SHOP);
+                this.openShopDirect();
+            } else {
+                this.advanceToNextLevel();
+            }
+        } finally {
+            // ★ finally 保证弹窗必关（与 selectReward 同款死锁防护）
+            this.playHideAnimation(index);
+        }
+    }
+
     // ---------- 📺 换一批广告点位（第 3 步 UI 接线）：战后三选一可看广告重抽一次 ----------
 
     /** 📺 换一批按钮：幂等创建（挂弹窗根节点底部），宝箱模式 / 已用过时隐藏 */
@@ -299,16 +430,16 @@ export class RewardDialog extends Component {
             label.color = Theme.white.clone();
             label.horizontalAlign = Label.HorizontalAlign.CENTER;
             label.verticalAlign = Label.VerticalAlign.CENTER;
-            label.string = '📺 看广告 换一批';
+            label.string = '看广告 换一批';
             btn.on(Node.EventType.TOUCH_END, this.onRefreshClick, this);
             this._adRefreshBtn = btn;
         }
-        btn.active = !this._chestMode && !this._adRefreshUsed;
+        btn.active = !this._chestMode && !this._contractMode && !this._adRefreshUsed;
     }
 
     /** 📺 换一批：看完整广告 → 重跑 showRewards 重抽三张（每关一次；漏斗埋点由 AdService 上报） */
     private onRefreshClick(): void {
-        if (this._adRefreshUsed || this._chestMode) {
+        if (this._adRefreshUsed || this._chestMode || this._contractMode) {
             return;
         }
         AdService.showRewarded('card_refresh', () => {
@@ -319,6 +450,81 @@ export class RewardDialog extends Component {
             console.log('[Reward] 广告换一批：重抽战后三选一（本关额度已用）');
             this.showRewards(true);
         });
+    }
+
+    // ---------- ☑️ 两步确认选卡（2026-09-07 用户拍板：点卡易误触，先预选再按确认） ----------
+
+    /** 点卡：仅预选（放大高亮 + 唤出「确认选择」按钮），不结算——误触还有一次反悔机会 */
+    private markPendingSelection(index: number): void {
+        if (this._selecting || this._pendingIndex === index) {
+            return; // 结算中 / 重复点同一张：不做任何事（防连点误触）
+        }
+        this._pendingIndex = index;
+        // 选中态：被点卡放大定格，其余卡回常态（视觉聚焦 = 当前待确认项）
+        [this.cardA, this.cardB, this.cardC].forEach((card, i) => {
+            if (!card?.isValid) {
+                return;
+            }
+            Tween.stopAllByTarget(card);
+            card.setScale(i === index ? 1.12 : 1, i === index ? 1.12 : 1, 1);
+        });
+        this.ensureConfirmBtn();
+        if (this._confirmBtn?.isValid) {
+            this._confirmBtn.active = true;
+        }
+        console.log(`[Reward] 已预选第 ${index + 1} 张卡（待确认）`);
+    }
+
+    /** 重置预选态：恢复三卡常态缩放 + 隐藏确认按钮（新弹窗展示 / 选卡结算后调用） */
+    private clearPendingSelection(): void {
+        this._pendingIndex = -1;
+        if (this._confirmBtn?.isValid) {
+            this._confirmBtn.active = false;
+        }
+        [this.cardA, this.cardB, this.cardC].forEach((card) => {
+            if (card?.isValid) {
+                Tween.stopAllByTarget(card);
+                card.setScale(1, 1, 1);
+            }
+        });
+    }
+
+    /** ☑️ 「确认选择」按钮：幂等创建（挂弹窗根节点底部，与换一批按钮同排错开），仅预选后显示 */
+    private ensureConfirmBtn(): void {
+        if (this._confirmBtn?.isValid) {
+            return;
+        }
+        const btn = new Node('ConfirmBtn');
+        btn.layer = this.node.layer;
+        this.node.addChild(btn);
+        btn.setPosition(0, -230, 0); // 卡片（底 -120）与换一批（顶 -274）之间的空档，不探出面板底缘
+        btn.addComponent(UITransform).setContentSize(220, 58);
+        const g = btn.addComponent(Graphics);
+        raisedButton(g, 220, 58, Theme.ui.green, 12);
+        const labelNode = new Node('Label');
+        labelNode.layer = btn.layer;
+        btn.addChild(labelNode);
+        labelNode.addComponent(UITransform).setContentSize(220, 58);
+        const label = labelNode.addComponent(Label);
+        label.fontSize = 20;
+        label.lineHeight = 24;
+        label.isBold = true;
+        label.color = Theme.white.clone();
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        label.string = '确 认 选 择';
+        btn.on(Node.EventType.TOUCH_END, this.onConfirmClick, this);
+        this._confirmBtn = btn;
+    }
+
+    /** ☑️ 确认按钮点击：把预选下标交给 selectReward 正式结算（_selecting 防抖继续兜底） */
+    private onConfirmClick(): void {
+        if (this._pendingIndex < 0 || this._selecting) {
+            return; // 无预选 / 结算中：忽略
+        }
+        const index = this._pendingIndex;
+        console.log(`[Reward] 确认选择第 ${index + 1} 张卡`);
+        this.selectReward(index);
     }
 
     /** 绑定单张卡牌的点击事件（点击下标即奖励下标，闭包捕获保证一一对应）+ 竖版钉位 */
@@ -340,15 +546,26 @@ export class RewardDialog extends Component {
         // TOUCH_END 监听，Button 纯冗余。
         card.getComponent(Button)?.destroy();
         card.getComponent(UITransform) ?? card.addComponent(UITransform);
+        // ☑️ 两步确认：点卡只预选（高亮 + 唤出确认按钮），按「确认选择」才结算——防误点
         card.on(Node.EventType.TOUCH_END, () => {
-            this.selectReward(index);
+            this.markPendingSelection(index);
         }, this);
+    }
+
+    /** 清理卡面上遗留的矢量图标子节点（Icon_ 前缀）：同一卡面在常规/宝箱/契约三模式间复用，防跨模式图标残留 */
+    private clearCardIcons(card: Node): void {
+        for (const child of [...card.children]) {
+            if (child.isValid && child.name.startsWith('Icon_')) {
+                child.destroy();
+            }
+        }
     }
 
     private setCardLabel(card: Node | null, index: number): void {
         if (!card?.isValid) {
             return;
         }
+        this.clearCardIcons(card);
         const reward = this._currentRewards[index];
         if (!reward) {
             return; // 降级模式（数据准备异常）：卡面保持空白，selectReward 走直通推进
@@ -429,6 +646,7 @@ export class RewardDialog extends Component {
             return;
         }
         card.active = true;
+        this.clearCardIcons(card);
         const info = RELIC_INFO[type];
         const label = card.getComponentInChildren(Label);
         if (label) {
@@ -470,7 +688,7 @@ export class RewardDialog extends Component {
         }
     }
 
-    /** 点击卡牌：宝箱模式 → 直接加遗物并推进；常规选牌 → 应用强化 → 按关卡分流转场（商店 / 下一关） */
+    /** 点击卡牌（两步确认第二步）：宝箱模式 → 直接加遗物并推进；常规选牌 → 应用强化 → 按关卡分流转场（商店 / 下一关） */
     private selectReward(index: number): void {
         if (this._selecting) {
             return; // 防抖：连点/双回调只结算一次
@@ -478,6 +696,11 @@ export class RewardDialog extends Component {
         // ☆ 宝箱模式：直接收录选定遗物
         if (this._chestMode) {
             this.selectRelic(index);
+            return;
+        }
+        // ⚑ 锻造契约模式：选定即立约（OrbBalance.applyContract），推进与常规选卡同链
+        if (this._contractMode) {
+            this.selectContract(index);
             return;
         }
         const reward = this._currentRewards[index];
@@ -568,6 +791,7 @@ export class RewardDialog extends Component {
         if (this._selecting || !this.node?.isValid) {
             return;
         }
+        this._pendingIndex = -1; // 结算启动：清除预选态（确认按钮随弹窗收起一并隐藏）
         const type = this._chestRelics[index];
         if (type === undefined) {
             return;

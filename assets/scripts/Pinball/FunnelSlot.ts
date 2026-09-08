@@ -4,7 +4,7 @@ import {
 } from 'cc';
 import { OrbController } from './OrbController';
 import { FunnelType } from '../Core/DataModels';
-import { cloneColor, EASE_PUNCH, funnelColor, Theme } from '../Core/ArtTheme';
+import { EASE_PUNCH, Theme } from '../Core/ArtTheme';
 import { FxManager } from '../Core/FxManager';
 import { recessedSlot } from '../Core/UiKit';
 
@@ -26,6 +26,10 @@ Enum(FunnelType);
 /**
  * 漏斗槽：回收进入的弹珠，按槽位类型结算后广播开火事件。
  * 依赖：节点需挂 Collider2D（sensor）接收弹珠接触。
+ *
+ * ★ 中性化改造（2026-09-07）：漏斗不再有红/蓝/金主题色——场景烘焙色 Sprite 一律置白，
+ *   光柱删除，光晕/凹陷槽/吞球反馈/汇聚特效统一中性白；类型识别改由漏斗正下方
+ *   「EMOJ + 文案」标注承担（💥 聚能 ×2 / ❄️ 精炼 ×1.5 / 💰 金币 +20）。
  */
 @ccclass('FunnelSlot')
 export class FunnelSlot extends Component {
@@ -45,8 +49,8 @@ export class FunnelSlot extends Component {
         if (this._collider) {
             this._collider.on(Contact2DType.BEGIN_CONTACT, this.onBeginContact, this);
         }
+        this.neutralizeSprite();
         this.ensureTypeLabel();
-        this.ensureNeonPillar();
         this.ensureRecess();
         this.ensureHaloPulse();
     }
@@ -83,22 +87,22 @@ export class FunnelSlot extends Component {
     private processOrb(orb: OrbController): void {
         orb.triggerFunnelAndDestroy(this);
         this.playSwallowFeedback();
-        // ★ 吞球演出：四周火花向槽口汇聚 + 竖直光柱闪（主题色）
-        FxManager.converge(this.node.worldPosition, FunnelSlot.themeColor(this.funnelType));
+        // ★ 吞球演出：四周火花向槽口汇聚 + 竖直光柱闪（中性白，漏斗无主题色）
+        FxManager.converge(this.node.worldPosition, Theme.white);
     }
 
     /**
-     * 常驻类型标注（漏斗正下方 42px 小字，主题色）：聚能×2 / 精炼×1.5 / 金币+20。
-     * 让「三选一漏斗」的价值一目了然（瞄准即下注），玩家不用心算倍率；幂等，场景已布置同名子节点则跳过。
+     * 常驻类型标注（漏斗正下方 42px 小字，白色）：💥 聚能 ×2 / ❄️ 精炼 ×1.5 / 💰 金币 +20。
+     * 漏斗本体已中性化，类型识别完全由该 EMOJ 标注承担；幂等，场景已布置同名子节点则跳过。
      */
     private ensureTypeLabel(): void {
         const node = this.node;
         if (!node?.isValid || node.getChildByName('TypeLabel')) {
             return;
         }
-        const text = this.funnelType === FunnelType.HeavyCannon ? '聚能 ×2'
-            : this.funnelType === FunnelType.IceFreeze ? '精炼 ×1.5'
-                : '金币 +20';
+        const text = this.funnelType === FunnelType.HeavyCannon ? '💥 聚能 ×2'
+            : this.funnelType === FunnelType.IceFreeze ? '❄️ 精炼 ×1.5'
+                : '💰 金币 +20';
         const labelNode = new Node('TypeLabel');
         labelNode.layer = node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
         labelNode.addComponent(UITransform);
@@ -107,13 +111,24 @@ export class FunnelSlot extends Component {
         label.fontSize = 18;
         label.lineHeight = 22;
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
-        label.color = FunnelSlot.themeColor(this.funnelType);
+        label.color = Theme.white;
         labelNode.addComponent(UIOpacity).opacity = 235;
         labelNode.setPosition(0, -42, 0);
         node.addChild(labelNode);
     }
 
-    /** 吞球反馈：Y 轴轻微下沉压缩回弹（Punch）+ Sprite 短暂闪烁对应槽位主题色（红/蓝/金） */
+    /**
+     * 漏斗去色：场景烘焙的槽位主题色（红/蓝/金）Sprite 一律覆白（幂等，覆盖旧值即可）。
+     * 呼吸光晕与凹陷槽已走中性白，本步保证场景里任何旧配色布置都不再透出。
+     */
+    private neutralizeSprite(): void {
+        const sp = this.getComponent(Sprite);
+        if (sp?.isValid) {
+            sp.color = Theme.white;
+        }
+    }
+
+    /** 吞球反馈：Y 轴轻微下沉压缩回弹（Punch）+ Sprite 短暂闪烁白光（中性反馈） */
     private playSwallowFeedback(): void {
         const node = this.node;
         if (!node?.isValid) {
@@ -128,12 +143,12 @@ export class FunnelSlot extends Component {
             .to(0.12, { scale: base })
             .start();
 
-        // Sprite 闪烁主题色
+        // Sprite 闪烁白光
         const sp = this.getComponent(Sprite);
         if (sp?.isValid) {
             Tween.stopAllByTarget(sp);
             const origin = sp.color.clone();
-            sp.color = FunnelSlot.themeColor(this.funnelType);
+            sp.color = Theme.white;
             tween(sp)
                 .delay(0.08)
                 .call(() => {
@@ -145,36 +160,9 @@ export class FunnelSlot extends Component {
         }
     }
 
-    /** 槽位主题色：聚能=红 / 精炼=蓝 / 金币=金（统一取自 ArtTheme） */
-    private static themeColor(type: FunnelType): Color {
-        return funnelColor(type);
-    }
-
-    /** 霓虹光柱：槽口向上的三层梯形渐隐光柱（主题色），让「三选一漏斗」在场上可读（幂等） */
-    private ensureNeonPillar(): void {
-        const node = this.node;
-        if (!node?.isValid || node.getChildByName('NeonPillar')) {
-            return;
-        }
-        const c = FunnelSlot.themeColor(this.funnelType);
-        const pillar = new Node('NeonPillar');
-        pillar.layer = node.layer; // 与宿主同 layer，确保被同一 UI 相机渲染
-        pillar.addComponent(UITransform);
-        const g = pillar.addComponent(Graphics);
-        // 三层梯形：外层宽而淡 → 内层窄而亮（alpha 依次抬升模拟渐隐）
-        const layers: Array<[number, number]> = [[92, 55], [66, 90], [38, 150]];
-        for (const [halfTop, alpha] of layers) {
-            const col = cloneColor(c);
-            col.a = alpha;
-            g.fillColor = col;
-            g.moveTo(-44, -30);
-            g.lineTo(-halfTop, 160);
-            g.lineTo(halfTop, 160);
-            g.lineTo(44, -30);
-            g.close();
-            g.fill();
-        }
-        node.addChild(pillar);
+    /** 槽位绘制色：中性白（漏斗已去主题色，全部装饰统一走此色） */
+    private static neutralColor(): Color {
+        return Theme.white;
     }
 
     /**
@@ -190,17 +178,17 @@ export class FunnelSlot extends Component {
         recess.layer = node.layer;
         recess.addComponent(UITransform).setContentSize(SLOT_MOUTH_W + 8, SLOT_MOUTH_H + 8);
         const g = recess.addComponent(Graphics);
-        recessedSlot(g, 0, 0, SLOT_MOUTH_W, SLOT_MOUTH_H, FunnelSlot.themeColor(this.funnelType), Theme.ui.panelOpaque, 12);
+        recessedSlot(g, 0, 0, SLOT_MOUTH_W, SLOT_MOUTH_H, FunnelSlot.neutralColor(), Theme.ui.panelOpaque, 12);
         node.addChild(recess);
     }
 
-    /** 槽口呼吸光晕：UIOpacity 正弦脉动（update 驱动，无 tween 泄漏），吸引视线到「三选一」目标（幂等） */
+    /** 槽口呼吸光晕：UIOpacity 正弦脉动（update 驱动，无 tween 泄漏），中性白光晕（幂等） */
     private ensureHaloPulse(): void {
         const node = this.node;
         if (!node?.isValid || node.getChildByName('Halo')) {
             return;
         }
-        const c = FunnelSlot.themeColor(this.funnelType);
+        const c = FunnelSlot.neutralColor();
         const halo = new Node('Halo');
         halo.layer = node.layer;
         halo.addComponent(UITransform);
@@ -208,7 +196,7 @@ export class FunnelSlot extends Component {
         // 三层同心圆软光晕（大而淡 → 小而亮），中心与槽口重合
         const layers: Array<[number, number]> = [[58, 26], [40, 44], [24, 66]];
         for (const [r, alpha] of layers) {
-            const col = cloneColor(c);
+            const col = c.clone();
             col.a = alpha;
             g.fillColor = col;
             g.circle(0, 0, r);

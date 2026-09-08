@@ -3,6 +3,7 @@ import {
     Vec3, tween, Tween, find,
 } from 'cc';
 import { PegType } from '../Core/DataModels';
+import { EventBus, GameEvents } from '../Core/EventBus';
 import { CameraShake } from '../Core/CameraShake';
 import { RelicManager } from '../Core/RelicManager';
 import { cloneColor, EASE_POP, EASE_PUNCH, SQUASH_SCALE_X, SQUASH_SCALE_Y, Theme } from '../Core/ArtTheme';
@@ -17,6 +18,34 @@ Enum(PegType);
 
 /** 炸药钉爆炸半径下限（px）：默认 120；铺满屏幕后由 PegBoardManager 按实际间距注入更大的值 */
 export const BOMB_RADIUS = 120;
+
+/** 边缘高能钉能量倍率（方案B①）：贴板缘的钉子能量 ×1.5（镀金赏金 ×2 在 OrbController 侧）——
+ *  高回报瞄点 vs 板缘弹跳少易掉槽的风险回报，让「瞄哪」第一次有了空间意义 */
+export const EDGE_ENERGY_MULT = 1.5;
+
+/**
+ * ★ 运行时一次性探针（2026-09-06 Boss 波钉板排查）：onHit / 力竭 / 重置 / 爆炸整个会话只各报首次。
+ * 用途：配合 PegBoardManager.generateBoard 尾部逐钉快照，判别「钉板变空」到底是
+ * 力竭状态机在 Boss 波被大量驱动（渐变灰化，符合 6×21=126 次受击预算数学），
+ * 还是绘制层突然整体隐形（快照里 PegArt/Graphics/active/层会露出马脚）。会话级一次性，零逐帧开销。
+ */
+const DIAG_ONCE: Record<string, boolean> = {};
+const diagOnce = (key: string, line: string): void => {
+    if (DIAG_ONCE[key]) {
+        return;
+    }
+    DIAG_ONCE[key] = true;
+    console.log(`[诊断·首见] ${line}`);
+};
+
+/**
+ * 首次力竭快照钩子：由 PegBoardManager 注入（避免 PegComponent → PegBoardManager 反向 import
+ * 造成循环依赖），钩子内部自行去重（整会话只拍一次）。PegComponent 在 exhaust() 里只负责触发。
+ */
+let firstExhaustHook: (() => void) | null = null;
+export function setFirstExhaustHook(hook: (() => void) | null): void {
+    firstExhaustHook = hook;
+}
 
 /** 各类型钉子的初始主题色（编辑器未配颜色时兜底使用）：色值统一取自 ArtTheme 语义色板 */
 const PEG_TYPE_COLORS: Record<PegType, Color> = {
@@ -70,13 +99,36 @@ export class PegComponent extends Component {
     }
     private _isExhausted = false;
 
-    /** 能量倍率：乘倍钉 ×2，其余 ×1 */
+    /** 能量倍率：乘倍钉 ×2，其余 ×1；边缘高能钉（方案B①）再 ×1.5 叠乘 */
     get multiplier(): number {
-        return this.pegType === PegType.Multiplier ? 2 : 1;
+        const base = this.pegType === PegType.Multiplier ? 2 : 1;
+        return base * (this.edgeBonus ? EDGE_ENERGY_MULT : 1);
+    }
+
+    /** 边缘高能钉标记（方案B①）：generateBoard 按「贴板缘 x」判定注入，随钉板每波重建；琥珀外环即视觉身份 */
+    edgeBonus = false;
+
+    /** 过热标记（方案B②）：本波目标钉（金环）；下一次弹珠撞中能量 ×3（OrbController 撞前捕获），受击即熄灭 */
+    get isOverheated(): boolean {
+        return this._isOverheated;
+    }
+    private _isOverheated = false;
+
+    /** 点燃过热（PegBoardManager 每张新钉板掷选调用；幂等，重复点燃无副作用） */
+    public armOverheat(): void {
+        if (!this.node?.isValid) {
+            return;
+        }
+        this._isOverheated = true;
+        this.redrawArt();
     }
 
     /** 爆炸守卫：炸药钉爆炸期间置 true，防止连锁爆炸在同一同步递归栈内重复引爆同一颗钉（栈溢出死循环） */
     private _isExploding = false;
+
+    /** ⚗️ 潮汐镀金标记（Task 008 协同）：1 = 本波被「潮汐镀金」镀金（镀金乘倍钉，撞击额外 +5 金）；
+     *  钉板每波随 REWARD_SELECTED 销毁重建自然清零；战后永久强化（upgradeRandomNormalPegs）不标记。 */
+    gildedAtWave = 0;
 
     /** 本体当前填充色（主题色 / 受击高亮 / 力竭灰化），由 redrawArt 的实心圆盘消费 */
     private _tint: Color = cloneColor(Theme.peg.normal);
@@ -132,6 +184,10 @@ export class PegComponent extends Component {
         }
         visited?.add(this);
         this._currentHitCount += 1;
+        // ★ 方案B②：受击即熄灭过热（×3 能量已由 OrbController 撞前捕获）——redrawArt 自然撤下金环；
+        //   置于各守卫之后：撞空（力竭/爆炸递归拦截）不消耗本波目标
+        this._isOverheated = false;
+        diagOnce('onHit', `钉受击状态机运行：${this.node.name}(${this.pegType}) 计数 ${this._currentHitCount}/${this.maxHitsPerRound} @本地(${this.node.position.x.toFixed(0)},${this.node.position.y.toFixed(0)})`);
 
         // 撞钉发声统一由 OrbController 碰撞点走 AudioManager 全局直播池（零 Inspector 配置），
         // 此处不再自行发声，避免与 OrbController 双响。
@@ -223,6 +279,7 @@ export class PegComponent extends Component {
         const radius = RelicManager.effectiveBombRadius(this.explosionRadius);
         // ★ 命中特效：白闪 + 冲击环 + 火星迸溅 + 烟团（旧实现爆炸零视觉，只震屏）
         FxManager.blast(myPos, Theme.peg.bomb, radius);
+        diagOnce('bomb', `炸药钉引爆 @本地(${this.node.position.x.toFixed(0)},${this.node.position.y.toFixed(0)}) 半径 ${radius.toFixed(0)}——爆炸只会给圈内钉 +1 受击，不销毁钉子`);
         for (const other of allPegs) {
             if (other === this || !other?.node?.isValid || other.isExhausted) continue;
             const dist = Vec3.distance(myPos, other.node.worldPosition);
@@ -238,6 +295,11 @@ export class PegComponent extends Component {
     private exhaust(): void {
         this._isExhausted = true;
         this._tint.set(this.disabledColor);
+        diagOnce('exhaust', `首颗钉力竭：${this.node.name}(${this.pegType}) 已打满 ${this.maxHitsPerRound} 次——力竭钉保留碰撞体仍可弹跳，仅变灰(${this.disabledColor.toHEX()})停计能；全场力竭的统一灰盘即「变空/只剩一颗」感知来源（2026-09-06 方案乙：Boss 波内达 14 颗力竭即被软复位全场拦截，正常不再出现整板灰盘）`);
+        firstExhaustHook?.(); // 首见力竭 → 触发一次性只读快照（钩子内部去重，纯通知，无行为）
+        // ★ Boss 波软复位信源（2026-09-06 方案乙）：EventBus 广播力竭，PegBoardManager 实时统计
+        //   当前力竭数并在 Boss 波达到阈值时全场复新（EventBus 解耦，防反向 import 循环依赖）
+        EventBus.emit(GameEvents.PEG_EXHAUSTED);
         // ★ 不再禁用 Collider2D（2026-09-04）：本方法由弹珠 onBeginContact 的同步回调链触发，
         //   物理锁定栈内改碰撞体状态会触发引擎警告「Can not active Rigidbody in contact listener」，
         //   且炸药钉爆炸会在此栈内连环禁用多颗钉（一次爆炸刷屏 N 条警告）。
@@ -265,6 +327,7 @@ export class PegComponent extends Component {
     public resetPeg(): void {
         this._currentHitCount = 0;
         this._isExhausted = false;
+        diagOnce('resetPeg', `钉重置（刷新钉/奖励卡）${this.node.name}：计数清零、颜色恢复，力竭状态可逆`);
 
         // ★ 不再触碰 Collider2D（2026-09-04）：exhaust 已不移除碰撞体，此处无需恢复；
         //   且刷新钉被撞时本方法跑在 onBeginContact 同步链内，逐颗 enabled=true 会刷屏
@@ -283,6 +346,8 @@ export class PegComponent extends Component {
      */
     public setPegType(type: PegType): void {
         this.pegType = type;
+        // ⚗️ 类型重设即回到原生钉（非镀金）：镀金标记只经 gildRandomNormalPegs 重新建立
+        this.gildedAtWave = 0;
 
         // 同步初始基准色：PEG_TYPE_COLORS 覆盖全部类型，未命中则保持当前基准
         const typeColor = PEG_TYPE_COLORS[type];
@@ -336,6 +401,11 @@ export class PegComponent extends Component {
         return !!this._art?.isValid && this._radius > 0;
     }
 
+    /** 🛡 渲染自愈入口（PegBoardManager 审计调用）：Graphics 绘制内容被清空（paths=0）时强制重绘 */
+    public forceRedraw(): void {
+        this.redrawArt();
+    }
+
     /** 取（幂等创建）PegArt 绘制层：子节点承载本体实心圆盘、类型纹样与受击计量环 */
     private ensureArt(): Graphics | null {
         if (this._art?.isValid) {
@@ -385,6 +455,20 @@ export class PegComponent extends Component {
             const a0 = -Math.PI / 2 + i * span + gap / 2;
             g.strokeColor = spent ? Theme.peg.ringOff : c;
             g.arc(0, 0, r + 7, a0, a0 + span - gap, false);
+            g.stroke();
+        }
+
+        // ①½ 决策层纹样（方案B）：边缘高能钉琥珀外环 / 过热钉金环（同钉兼具时双环同心）
+        if (this.edgeBonus) {
+            g.lineWidth = 3;
+            g.strokeColor = Theme.fx.ember;
+            g.circle(0, 0, r + 12);
+            g.stroke();
+        }
+        if (this._isOverheated) {
+            g.lineWidth = 3.5;
+            g.strokeColor = Theme.peg.multiplier;
+            g.circle(0, 0, r + 17);
             g.stroke();
         }
 
@@ -472,6 +556,9 @@ export class PegComponent extends Component {
         const picked = normals.slice(0, Math.max(0, count));
         for (const peg of picked) {
             peg.upgradeToMultiplier();
+            // ⚗️ 镀金标记（Task 008 协同）：OrbController 撞到带标记的钉发放 +5 金 bounty；
+            //   战后永久强化（upgradeRandomNormalPegs）走同一 upgradeToMultiplier 但【不】标记
+            peg.gildedAtWave = 1;
         }
         return picked;
     }

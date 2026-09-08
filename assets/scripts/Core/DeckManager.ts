@@ -15,17 +15,14 @@ const { ccclass, property } = _decorator;
 
 /** 弹珠类型编号（与 OrbController.OrbType 对齐）：0 普通 / 1 裂变雷球 / 2 重力熔岩球 / 3 霜冻冰球 */
 const ORB_TYPE_NORMAL = 0;
-const ORB_TYPE_LIGHTNING = 1;
-const ORB_TYPE_LAVA = 2;
-const ORB_TYPE_FROST = 3;
 
 /** 类型编号 → 显示名（用于 DeckLabel 与日志）：0 普通 / 1 雷球 / 2 熔岩 / 3 冰霜 / 4 等离子 / 5 熔核 / 6 吸血 */
 const ORB_TYPE_NAMES: string[] = ['普通弹珠', '闪电弹珠', '熔岩弹珠', '冰霜弹珠', '等离子球', '熔核球', '吸血球'];
 
-/** 初始卡组构成（纯类型编号，无需任何 Prefab 绑定）：3 普通 + 1 雷球 + 1 熔岩 + 1 冰，固定 6 颗 */
+/** 初始卡组构成（纯类型编号，无需任何 Prefab 绑定）：2026-09-07 用户拍板——开局 6 颗全普通白球，特殊球种只经商店 / 战后奖励获得 */
 const INITIAL_DECK_TYPES: number[] = [
     ORB_TYPE_NORMAL, ORB_TYPE_NORMAL, ORB_TYPE_NORMAL,
-    ORB_TYPE_LIGHTNING, ORB_TYPE_LAVA, ORB_TYPE_FROST,
+    ORB_TYPE_NORMAL, ORB_TYPE_NORMAL, ORB_TYPE_NORMAL,
 ];
 
 /** 牌库容量基础软上限：masterDeck 最多 8 颗（Meta「弹珠槽扩容」在此之上叠加），超限需先花金币删卡腾位 */
@@ -37,7 +34,7 @@ const MAX_DECK_SIZE = 8;
  * 职责：
  *  - 只维护弹珠类型与牌库状态；球种特性完全由类型编号驱动，
  *    LauncherController 发射时经 drawNextOrbType → OrbController.initOrbType 动态赋予；
- *  - 抽牌堆为 number[]（0 普通 / 1 雷球 / 2 熔岩），抽空时弃牌重洗、再无则重建初始卡组 → 弹药永不枯竭；
+ *  - 抽牌堆为 number[]（元素为类型编号），抽空时弃牌重洗、再无则从总池重洗 → 弹药永不枯竭；
  *  - deckLabel 实时显示「当前装填 | 剩余」。
  */
 @ccclass('DeckManager')
@@ -88,7 +85,7 @@ export class DeckManager extends Component {
         // 🎒 右上角背包徽章已下线（2026-09-04 用户要求取消）：背包面板保留底部牌库文字轻点入口
         // 🎒 双通道呼出：底部牌库文字轻点同样打开背包面板（与右上角 🎒 徽章体验一致）
         this.bindDeckLabelTap();
-        console.log(`[DeckManager] 初始卡组就绪：${this.masterDeck.map(t => ORB_TYPE_NAMES[t]).join('、')}（弹药永不枯竭）`);
+        console.log(`[DeckManager] 初始卡组就绪：${this.masterDeck.map(t => ORB_TYPE_NAMES[t]).join('、')}（全普通开局，特殊球经商店 / 奖励获得）`);
     }
 
     protected onDestroy(): void {
@@ -238,6 +235,24 @@ export class DeckManager extends Component {
     public discardOrbType(type: number): void {
         this.discardPile.push(type);
         this.updateDeckLabel();
+    }
+
+    /**
+     * 🎲 重铸整手牌（商店稀有位消费，2026-09-07 Task 007）：masterDeck 数量不变、球种随机重排。
+     * 抽/弃两堆整体丢弃并从重铸后的总池重洗——与 start() 建堆方式一致，弹药永不枯竭。
+     * @returns true 重铸成功；总池为空返回 false（正常运行不可能：卡组恒有保底球）。
+     */
+    public rerollDeckComposition(): boolean {
+        if (this.masterDeck.length === 0) {
+            return false;
+        }
+        this.shuffle(this.masterDeck);
+        this.drawPile = [...this.masterDeck];
+        this.shuffle(this.drawPile);
+        this.discardPile.length = 0;
+        this.updateDeckLabel();
+        console.log(`[DeckManager] 🎲 整手牌已重铸：${this.masterDeck.length} 颗球种随机重排`);
+        return true;
     }
 
     /** 刷新牌库信息 Label：装填: [球种] | 待发: X | 弃牌: Y */
