@@ -23,12 +23,12 @@ import { HitStop } from '../Core/HitStop';
 
 const { ccclass, property } = _decorator;
 
-/** 出怪 X：屏幕右边缘 */
-const SPAWN_X = 320;
-/** 出怪 Y 基准 */
-const SPAWN_Y = 480;
-/** 同波相邻敌人的 Y 错开量，避免完全重叠 */
-const SPAWN_Y_STEP = 40;
+/** 🧱 高空随机出怪（物理肉鸽 P3，俄罗斯方块式加入战场）：X 在钉板宽度内随机（±280，
+ *  钉板全宽 720 边缘 ±344，内收留出敌人半径余量），Y 在钉板顶部区间随机（450~550），
+ *  高度随机天然错开、防多怪完全重叠 */
+const SPAWN_X_RANGE = 280;
+const SPAWN_Y_MIN = 450;
+const SPAWN_Y_MAX = 550;
 /** 🦠 史莱姆分裂小怪：血量 = 母体最大生命 × 此比例 */
 const MINI_SLIME_HP_RATIO = 0.35;
 /** 🦠 分裂小怪体型缩放（母体为 1） */
@@ -38,12 +38,14 @@ const MINI_SLIME_OFFSET_X = 30;
 // 攻城基础伤害已随章节成长（难度方案B），唯一真源在 LevelManager.getBaseAttackDamage()，此处不再私有常量避免两处漂移。
 /** 每波开始补贴金币（发射已免费，此补贴为纯商店收入打底：约每波 1/9 张商店卡片的购买力） */
 const WAVE_SHOT_SUBSIDY = 9;
+/** 💥 前期休克疗法：波次基准移速钳底值（px/s）——LevelManager 前期曲线约 37，钳底硬抬至 45，压缩走位/瞄准窗口 */
+const WAVE_MOVE_SPEED_FLOOR = 45;
 /** 🐕 结算看门狗延迟（秒）：SHOW_REWARDS 派发后弹窗仍未激活时的重发检查间隔 */
 const REWARD_WATCHDOG_DELAY = 3;
 
 /**
  * 波次管理器：挂载在 BattleLayer/EnemyContainer 节点上。
- * - 接管敌人生成：按波次表在屏幕右缘按间隔出怪，并按章节/波次「混合出怪」——
+ * - 接管敌人生成：按波次表在钉板上方高空随机落怪（俄罗斯方块式加入战场），并按章节/波次「混合出怪」——
  *   🔴 普通怪 / 🛡️ 铁甲怪 / ⚡ 突袭怪 / 🦠 史莱姆按权重池随机组合（Slime 第 2 章解锁，
  *   第 1 章第 1 波纯普通怪教学）；👹 Boss 波（章节第 10 关第 3 波）固定出章节大 Boss；
  *   类型数值唯一真源见 DataModels.ENEMY_TYPE_STATS；
@@ -200,7 +202,7 @@ export class WaveManager extends Component {
         if (this._gameOver || index >= def.count) {
             return;
         }
-        this.spawnOne(def, index);
+        this.spawnOne(def);
         if (def.spawnInterval > 0 && index + 1 < def.count) {
             this.scheduleOnce(() => {
                 if (this.node?.isValid && !this._gameOver) {
@@ -211,7 +213,7 @@ export class WaveManager extends Component {
     }
 
     /** 生成单只敌人：波次混合出怪决定类型，按 ENEMY_TYPE_STATS 套用血量/移速/体型/攻城伤害与外观 */
-    private spawnOne(def: WaveDef, index: number): void {
+    private spawnOne(def: WaveDef): void {
         const enemy = this.createEnemyNode();
         if (!enemy?.isValid) {
             return;
@@ -230,7 +232,9 @@ export class WaveManager extends Component {
         ec.setupType(type);
         ec.maxHp = Math.max(1, Math.round(def.hp * stats.hpMult));
         ec.currentHp = ec.maxHp; // 显式同步当前血量（onLoad 已按 maxHp 同步，此处双保险）
-        ec.moveSpeed = stats.speedOverride > 0 ? stats.speedOverride : def.speed;
+        // 💥 前期休克疗法：波次基准移速钳底 45（def.speed 1-1 约 37.4，低于钳底时抬到 45；⚡突袭怪 85 不受影响）
+        const waveSpeed = Math.max(WAVE_MOVE_SPEED_FLOOR, def.speed);
+        ec.moveSpeed = stats.speedOverride > 0 ? stats.speedOverride : waveSpeed;
         ec.attackDamage = Math.max(1, Math.round(LevelManager.getBaseAttackDamage() * stats.attackDamageMult));
         enemy.setScale(stats.scale, stats.scale, 1);
         // 🎖️ 精英波（每关第 3 波非 Boss）：按章节掷一组去重词缀（难度方案B：第 10 章起 2 条 / 第 25 章起 3 条），
@@ -240,8 +244,11 @@ export class WaveManager extends Component {
                 ec.applyAffix(affix, LevelManager.currentChapter);
             }
         }
-        // 错开 Y 高度，避免同屏多怪完全重叠
-        enemy.setPosition(SPAWN_X, SPAWN_Y - index * SPAWN_Y_STEP, 0);
+        // 🧱 高空随机落怪（俄罗斯方块式）：钉板宽度内随机 X + 钉板顶部随机高度，天然错开防完全重叠
+        enemy.setPosition(
+            Math.random() * SPAWN_X_RANGE * 2 - SPAWN_X_RANGE,
+            SPAWN_Y_MIN + Math.random() * (SPAWN_Y_MAX - SPAWN_Y_MIN), 0,
+        );
         enemy.setParent(this.node);
         // ★ Boss 出场演出（注意力分层顶端：运动 + 意外）：红光爆闪 + 冲击环 + 震屏 + 顿帧 + 宣告跳字；
         //   普通/精英怪只保留既有出生反馈，不做全场级演出，保证「该看哪」的强度差

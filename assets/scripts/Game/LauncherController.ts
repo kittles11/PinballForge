@@ -1,19 +1,20 @@
 /**
- * 发射器（2026-09-07 随机角度改版）：固定在顶部中央的弹射座，出射角【每次发射前重新随机滚定】。
+ * 发射器（2026-09-08 反向深渊改版）：玩家手指拖拽瞄准、松手发射，从屏幕底部向上打出弹珠。
  *
  * 设计要点（用户拍板）：
- *  - 角度随机发生在 launchOrb 内部——每发独立均匀分布于 [-165°, -15°]（恒向上扇区，
- *    左右各留 15° 贴墙死区），连点冷却内的连按同样每发一随机，不是开局滚一次定死；
- *  - 触摸拖拽瞄准 / AimPreview 弹道预测线已整体移除：方向不可预知，预测线会构成误导；
- *  - 底部「发 射」按钮为唯一发射入口（ensureLaunchButton 纯代码自举，幂等，屏底漏斗下方），
- *    弹窗互斥（UI_MODAL_CHANGED / GAME_OVER + 现实同步）与连点冷却沿用原发射节流；
- *  - 按压手感（attachPressFx）：按下节点下沉 3px + pressed 态重绘（影子塌缩 / 暗边减半 /
- *    面部减光），松手 backOut 弹回——与 UiKit 浮雕语言配套的「按得进去」反馈；
+ *  - 发射角度 100% 贴合拖拽瞄准线：发射向量 = (触点 - 发射座) 归一化，全程零 Math.random、
+ *    零扇区外插——松手瞬间所见即所得（随机角改版 [-165°,-15°] 滚角随布局反转一并退役）；
+ *  - 布局反转：弹射座从顶部 (0, 510) 迁往屏底（onLoad 兜底：y ≥ 0 即仍留在上半屏时
+ *    强制 (0, -560)，漏斗吞球区 -380 之下，拖拽向上不被漏斗横杆遮挡）；
+ *  - 纯拖拽发射：全局 input TOUCH_END 释放发射，不再依赖任何 Button click 回调
+ *    （「发 射」按钮整套链路随随机角改版一并退役）；太短（< MIN_AIM_LENGTH，含屏底
+ *    牌库文字轻点呼出背包）或朝下的触摸不发射；
+ *  - 弹窗互斥（UI_MODAL_CHANGED / GAME_OVER + 现实同步）与连发冷却（launchCooldown）沿用；
  *  - DOM 级 R 键逃生门保留（输入系统整体坏死时强制重载场景的唯一自救手段）。
  */
 import {
-    _decorator, Component, Node, Prefab, Graphics, Vec2, Vec3, UITransform,
-    Button, Label, instantiate, director, RigidBody2D, Color, Tween, tween,
+    _decorator, Component, Node, Prefab, Vec2, Vec3,
+    input, Input, EventTouch, instantiate, director, RigidBody2D,
 } from 'cc';
 import { DeckManager } from '../Core/DeckManager';
 import { EventBus, GameEvents } from '../Core/EventBus';
@@ -21,24 +22,17 @@ import { anyModalOpen } from '../Core/ModalGate';
 import { OrbController } from '../Pinball/OrbController';
 import { OrbBalance } from '../Core/OrbBalance';
 import { OrbType } from '../Core/DataModels';
-import { Theme } from '../Core/ArtTheme';
-import { raisedButton } from '../Core/UiKit';
 
 const { ccclass, property } = _decorator;
 
-/** 发射方向允许的角度范围（度）：-165°（左上偏左）~ -15°（右上偏右），恒向上扇区 */
-const LAUNCH_ANGLE_MIN_DEG = -165;
-const LAUNCH_ANGLE_MAX_DEG = -15;
-/** 「发 射」按钮尺寸 / 位置（UILayer 局部坐标，屏底漏斗下方，锁定 720×1280 画布） */
-const LAUNCH_BTN_W = 150;
-const LAUNCH_BTN_H = 64;
-const LAUNCH_BTN_POS_Y = -545;
-/** 按压下沉量（px）：与 UiKit 暗边厚度同量级，压满再回弹才有「真按进去」的实体感 */
-const LAUNCH_BTN_PRESS_DIP_Y = 3;
+/** 手指距发射点小于该值（px）视为无效瞄准（轻点误触，不发射） */
+const MIN_AIM_LENGTH = 15;
+/** 发射座兜底落位（UILayer 局部坐标，锁定 720×1280 画布）：屏底漏斗吞球区之下 */
+const LAUNCHER_BOTTOM_Y = -560;
 
 /**
- * 发射器：随机角度 + 按钮发射。orbPrefab / launcherNode / launchSpeed / launchCooldown
- * 沿用场景既有接线；trajectoryGraphics / previewSpeedScale / previewTime 随预测线一并退役。
+ * 发射器：拖拽瞄准发射。orbPrefab / launcherNode / launchSpeed / launchCooldown
+ * 沿用场景既有接线；按钮自举 / 按压手感 / 随机滚角随发射改版一并退役。
  */
 @ccclass('LauncherController')
 export class LauncherController extends Component {
@@ -49,9 +43,9 @@ export class LauncherController extends Component {
     launcherNode: Node | null = null;
 
     @property
-    launchSpeed = 1200;
+    launchSpeed = 1500;
 
-    /** 发射冷却（秒）：「发 射」按钮连点节流（原拖拽松手节流平移到按钮） */
+    /** 发射冷却（秒）：拖拽松手连发节流（原按钮连点节流平移到释放手势） */
     @property
     launchCooldown = 0.25;
 
@@ -59,14 +53,17 @@ export class LauncherController extends Component {
     private _modalOpen = false;
     /** 上次发射时刻（秒）：冷却节流基准 */
     private _lastLaunchTime = 0;
-    /** 自举的「发 射」按钮节点（ensureLaunchButton 创建 / 复用） */
-    private _launchBtn: Node | null = null;
     /** 复用暂存：弹珠出生点（世界坐标） */
     private readonly _tmpWorld = new Vec3();
 
     protected onLoad(): void {
         if (!this.launcherNode) {
             this.launcherNode = this.node;
+        }
+        // 布局反转兜底：反向深渊里弹珠从屏底向上打，发射座绝不能留在上半屏
+        //（场景烘焙 (0, 510) 的旧坐标、拖动错的都拉回屏底漏斗之下）
+        if (this.launcherNode.position.y >= 0) {
+            this.launcherNode.setPosition(0, LAUNCHER_BOTTOM_Y, 0);
         }
         EventBus.on(GameEvents.UI_MODAL_CHANGED, this.onUiModalChanged, this);
         EventBus.on(GameEvents.GAME_OVER, this.onGameOver, this);
@@ -80,10 +77,12 @@ export class LauncherController extends Component {
                 }
             });
         }
-        this.ensureLaunchButton();
+        // 拖拽瞄准发射：全局监听松手（发射无按钮，全屏任意位置拖拽后松手即发射）
+        input.on(Input.EventType.TOUCH_END, this.onTouchEnd, this);
     }
 
     protected onDestroy(): void {
+        input.off(Input.EventType.TOUCH_END, this.onTouchEnd, this);
         EventBus.targetOff(this);
     }
 
@@ -104,112 +103,35 @@ export class LauncherController extends Component {
     }
 
     /**
-     * 「发 射」按钮点按链路（唯一发射入口）：弹窗互斥 → 冷却节流 → 发射。
-     * 看门狗已随全局输入退役——模态镜像卡死的现实同步在 syncModalOpen 完成。
+     * 拖拽瞄准发射（唯一发射入口）：TOUCH_END 松手时以「触点 - 发射座」为发射向量。
+     * 太短（< MIN_AIM_LENGTH）= 轻点误触（含牌库文字轻点呼出背包）、朝下 = 无效手势，均不发射。
      */
-    private onLaunchClicked(): void {
-        if (this._modalOpen) {
-            return; // 弹窗期禁发（结算/奖励/商店等覆盖层打开时）
+    private onTouchEnd(event: EventTouch): void {
+        if (this._modalOpen || !this.launcherNode?.isValid) {
+            return;
         }
+        // 冷却节流（锚定松手时刻；本手势无论是否发射都占用冷却基准）
         const now = Date.now() / 1000;
         if (now - this._lastLaunchTime < this.launchCooldown) {
-            return; // 连点节流
+            return;
+        }
+        const ui = event.getUILocation();
+        const origin = this.launcherNode.worldPosition;
+        // 方向 = 松手触点 - 发射座：所见即所得，零随机、零扇区外插（反向深渊：向上即 dir.y > 0）
+        const aimDir = new Vec2(ui.x - origin.x, ui.y - origin.y);
+        if (aimDir.length() < MIN_AIM_LENGTH || aimDir.y <= 0) {
+            return; // 轻点误触（含屏底牌库文字呼出背包）/ 朝下拖拽：反向深渊只收向上发射
         }
         this._lastLaunchTime = now;
-        this.launchOrb();
+        this.launchOrb(aimDir);
     }
 
     /**
-     * 自举屏底「发 射」按钮（幂等，场景无需布置）：Canvas/UILayer/LaunchBtn。
-     * 金色凸起（raisedButton + Theme.ui.gold）——发射是主动进攻动作，走金色 CTA
-     * 语言；Label 居中「发 射」。热重载时复用同名节点（事件随旧组件销毁，需重挂）。
+     * 发射当前弹珠（唯一调用方：onTouchEnd，拖拽松手触发）。
+     * 方向 = onTouchEnd 算好的拖拽瞄准向量（触点 - 发射座），本函数零角度加工：
+     * 不做任何随机扰动 / 扇区钳制，归一化后 100% 沿玩家瞄准线出膛。
      */
-    private ensureLaunchButton(): void {
-        const uiLayer = director.getScene()?.getChildByName('Canvas')?.getChildByName('UILayer');
-        if (!uiLayer?.isValid) {
-            console.warn('[Launcher] 未找到 Canvas/UILayer，「发 射」按钮未自举');
-            return;
-        }
-        const existing = uiLayer.getChildByName('LaunchBtn');
-        if (existing?.isValid) {
-            this._launchBtn = existing;
-            return;
-        }
-        const btn = new Node('LaunchBtn');
-        btn.layer = uiLayer.layer; // 与 UILayer 同 layer，确保被同一 UI 相机渲染
-        btn.addComponent(UITransform).setContentSize(LAUNCH_BTN_W, LAUNCH_BTN_H);
-        btn.setPosition(0, LAUNCH_BTN_POS_Y, 0);
-        const g = btn.addComponent(Graphics);
-        raisedButton(g, LAUNCH_BTN_W, LAUNCH_BTN_H, Theme.ui.gold);
-        // ⚠️ cc.Label 与 cc.Graphics 同为 UIRenderer 派生组件、同节点互斥——直加会抛
-        // "conflicts with the existing 'cc.Graphics'" 中断创建链（按钮从未挂进场景）。
-        // 文字一律挂子节点（与 RewardDialog 换一批按钮等全库既有按钮同款结构）。
-        const labelNode = new Node('Label');
-        labelNode.layer = btn.layer;
-        btn.addChild(labelNode);
-        labelNode.addComponent(UITransform).setContentSize(LAUNCH_BTN_W, LAUNCH_BTN_H);
-        const label = labelNode.addComponent(Label);
-        label.string = '发 射';
-        label.fontSize = 26;
-        label.lineHeight = 30;
-        label.isBold = true;
-        label.color = Theme.white;
-        label.horizontalAlign = Label.HorizontalAlign.CENTER;
-        label.verticalAlign = Label.VerticalAlign.CENTER;
-        btn.addComponent(Button).transition = Button.Transition.NONE;
-        btn.on(Button.EventType.CLICK, this.onLaunchClicked, this);
-        this.attachPressFx(btn, LAUNCH_BTN_W, LAUNCH_BTN_H, Theme.ui.gold, LAUNCH_BTN_PRESS_DIP_Y);
-        uiLayer.addChild(btn);
-        this._launchBtn = btn;
-    }
-
-    /**
-     * 按钮按压手感（通用，吃任何 raisedButton 凸起按钮）：
-     * 按下 → 节点下沉 dipY + 按压态重绘（影子塌缩 / 暗边减半 / 面部减光，UiKit.raisedButton pressed）；
-     * 松手/滑出 → 弹回原位 + 静止态重绘，backOut 缓动带一点「弹起」的活泼劲。
-     * 监听挂按钮节点（闭包持原坐标，随节点销毁回收，无组件无 this）；底位取挂载时现值，热重载位移后仍准。
-     */
-    private attachPressFx(btn: Node, w: number, h: number, body: Color, dipY: number): void {
-        const restY = btn.position.y;
-        const repaint = (pressed: boolean): void => {
-            const g = btn.getComponent(Graphics);
-            if (!g?.isValid) {
-                return;
-            }
-            g.clear();
-            raisedButton(g, w, h, body, undefined, pressed);
-        };
-        btn.on(Node.EventType.TOUCH_START, (): void => {
-            Tween.stopAllByTarget(btn);
-            btn.setPosition(btn.position.x, restY - dipY, 0);
-            repaint(true);
-        }, this);
-        const release = (): void => {
-            Tween.stopAllByTarget(btn);
-            repaint(false);
-            tween(btn)
-                .to(0.06, { position: new Vec3(btn.position.x, restY, 0) }, { easing: 'backOut' })
-                .start();
-        };
-        btn.on(Node.EventType.TOUCH_END, release, this);
-        btn.on(Node.EventType.TOUCH_CANCEL, release, this);
-    }
-
-    /** 滚定一次随机出射角（度）：[-165°, -15°] 均匀分布，恒向上扇区（左右各留 15° 贴墙死区）。 */
-    private rollLaunchAngle(): number {
-        return LAUNCH_ANGLE_MIN_DEG
-            + Math.random() * (LAUNCH_ANGLE_MAX_DEG - LAUNCH_ANGLE_MIN_DEG);
-    }
-
-    /**
-     * 发射当前弹珠（唯一调用方：onLaunchClicked）。
-     * ★ 每发先重滚随机出射角——随机发生在本函数内部，冷却外的每次点按都拿到新方向
-     * （用户拍板：每次发射都随机，不是开局滚一次定死），再按球种走雷球散射或单球发射。
-     */
-    private launchOrb(): void {
-        const deg = this.rollLaunchAngle();
-        const rad = deg * Math.PI / 180;
-        const dir = new Vec2(Math.cos(rad), Math.sin(rad));
+    private launchOrb(aimDir: Vec2): void {
         const prefab = this.orbPrefab;
         if (!prefab?.isValid || !this.launcherNode?.isValid) {
             console.warn('[Launcher] 弹珠 Prefab 或发射点无效！');
@@ -218,7 +140,19 @@ export class LauncherController extends Component {
         // 🎯 发射免费（2026-09-03 回滚发射经济）：金币回归纯商店货币（击杀掉落 + 金币槽 +20 + 波次补贴）。
         // DeckManager 为纯类型化卡组（不持有 Prefab），发射统一使用本组件配置的 orbPrefab
         const orbType = DeckManager.instance?.drawNextOrbType() ?? 0;
-        console.log(`[Launcher] 🚀 成功发射弹珠: 类型=${orbType} 角度=${Math.round(deg)}°`);
+        console.log(`[Launcher] 🚀 成功发射弹珠: 类型=${orbType}`);
+
+        // 🎲 回合推进（物理肉鸽 P2）：一次发射 = 消耗一次开火权 = 游戏推进一回合——
+        // EnemyManager 监听后驱动全体敌人下落一步。雷球散射在 launchOrb 只派发一次
+        //（一次开火权 = 一回合，不按散种子弹数重复推进）。
+        EventBus.emit(GameEvents.TURN_ADVANCE);
+
+        // 归一化瞄准向量：发射初速 = 单位方向 × launchSpeed（零随机、零角度加工，所见即所得）
+        const len = aimDir.length();
+        if (len <= 0) {
+            return;
+        }
+        const dir = new Vec2(aimDir.x / len, aimDir.y / len);
 
         if (orbType === OrbType.Lightning) {
             this.fireLightningBurst(prefab, dir);
@@ -270,14 +204,12 @@ export class LauncherController extends Component {
             return false;
         }
 
+        // 反向深渊：零重力（OrbBalance 全系 gravityScale=0）→ 初速 = 瞄准方向 × launchSpeed 匀速直线。
+        // ★ 只写 linearVelocity（2026-09-08 根修）：旧版赋速后再叠加同值 impulse，实际初速被双倍
+        //   放大到 2×launchSpeed——拖拽瞄准时代必须所见即所得，双重叠加已拆除。
         const vx = dir.x * this.launchSpeed;
         const vy = dir.y * this.launchSpeed;
-
         rb.linearVelocity = new Vec2(vx, vy);
-        const mass = rb.getMass();
-        if (mass > 0) {
-            rb.applyLinearImpulseToCenter(new Vec2(vx * mass, vy * mass), true);
-        }
         return true;
     }
 }

@@ -71,17 +71,17 @@ check('命中守卫：入槽 / 销毁流程中跳过（与 update 兜底同守�
 check('命中即击退：enemy.knockback()（反馈在敌人侧兑现）',
     /enemy\.knockback\(\);/.test(orb));
 
-// ── ④ 击退常量纯算术复核 ──
-check('击退接线：knockback 置位 _knockbackSpeed，update 衰减消费（向右 = 推离防线）',
+// ── ④ 击退常量纯算术复核（🎲 物理肉鸽 P2：行军移除后，击退是 update 中仅存的连续位移） ──
+check('击退接线：knockback 置位 _knockbackSpeed，update 衰减消费（向右推开敌人）',
     /this\._knockbackSpeed = KNOCKBACK_SPEED;/.test(enemy)
-    && /nx \+= this\._knockbackSpeed \* dt;/.test(enemy)
+    && /this\._knockbackSpeed \* dt/.test(enemy)
     && /this\._knockbackSpeed = Math\.max\(0, this\._knockbackSpeed - KNOCKBACK_DECAY \* dt\);/.test(enemy));
-check('击退状态互斥：冻结 / 施法 / 头槌 / 庆祝 / 死亡中不生效（位置由各自驱动接管）',
-    /public knockback\(\): void \{\s*if \(this\._dead \|\| !this\.node\?\.isValid \|\| this\.isFrozen \|\| this\._casting\s*\|\| this\._lungeAnimating \|\| this\._celebrating\) \{/.test(enemy));
+check('击退状态互斥：冻结 / 施法 / 庆祝 / 死亡中不生效（位置由各自驱动接管）',
+    /public knockback\(\): void \{\s*if \(this\._dead \|\| !this\.node\?\.isValid \|\| this\.isFrozen \|\| this\._casting\s*\|\| this\._celebrating\) \{/.test(enemy));
 const kbSpeed = 90, kbDecay = 240;
 const slideDist = (kbSpeed * kbSpeed) / (2 * kbDecay);
-check(`击退滑行距离 v²/2a = ${slideDist}px（< 头槌 25px：击退不打乱防线攻防节奏）`,
-    Math.abs(slideDist - 16.875) < 0.01 && slideDist < 25);
+check(`击退滑行距离 v²/2a = ${slideDist}px（< 回合步长 60px：击退不把敌人推离本格威胁）`,
+    Math.abs(slideDist - 16.875) < 0.01 && slideDist < 60);
 
 console.log(failed === 0 ? '\n✅ 弹珠×敌人物理交互自检全部通过' : `\n❌ ${failed} 项未通过`);
 // 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）

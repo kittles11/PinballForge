@@ -8,6 +8,7 @@ import { raisedButton } from '../Core/UiKit';
 import { GoldManager } from '../Core/GoldManager';
 import { RelicManager } from '../Core/RelicManager';
 import { LevelManager } from '../Core/LevelManager';
+import { GearManager, calcGears, wavesSurvived } from '../Core/GearManager';
 import { ShopDialog } from './ShopDialog';
 import { OrbBalance } from '../Core/OrbBalance';
 import { MetaManager } from '../Core/MetaManager';
@@ -59,6 +60,8 @@ export class ResultDialog extends Component {
     private _rewardGranted = false;
     /** 本局获得的碎片量（锻造区展示用） */
     private _gainedShards = 0;
+    /** 本局结算获得的齿轮量（⚙️ 局外成长：存活波次×5 + 剩余金币÷10；锻造区余额行展示用） */
+    private _gainedGears = 0;
     /** 锻造区根节点（幂等创建；descLabel 与 RestartButton 之间） */
     private _forgeRoot: Node | null = null;
     /** 碎片余额行 Label */
@@ -184,6 +187,17 @@ export class ResultDialog extends Component {
             this._gainedShards = MetaManager.grantRunReward(
                 LevelManager.currentChapter, LevelManager.currentLevel, isWin,
             );
+            // ⚙️ 局外成长（齿轮结算）：存活波次 ×5 + 未花完金币 ÷10，跨局累计入 pinballforge_gears
+            //   （CastleController 初始化消费：每 100 齿轮 → 城堡 maxHp 永久 +10；局外兑换面板后续再建）。
+            //   失败时当前波未清 → 存活波次 −1 修正；胜利时当前波已清且 GAME_VICTORY 先于 nextLevel
+            //   广播（WaveManager 终局提前 return，进度未推进）→ 不修正。
+            //   ★ 与碎片共用 _rewardGranted 防重标志：复活续战后再次结算会重新走本块，单次结算只入账一次。
+            this._gainedGears = calcGears(
+                wavesSurvived(LevelManager.currentChapter, LevelManager.currentLevel, LevelManager.currentWave),
+                GoldManager.instance?.getGold() ?? 0,
+                isWin,
+            );
+            GearManager.addGears(this._gainedGears);
         }
         this.ensureForgeSection();
         this._shownWin = isWin;
@@ -256,7 +270,7 @@ export class ResultDialog extends Component {
     /** 刷新锻造区文案与配色：购买模式（名称 Lv 价格）/ 预览模式（名称·效果，🔒 显示前置） */
     private refreshForge(): void {
         if (this._shardsLabel?.isValid) {
-            this._shardsLabel.string = `精铸碎片 ◆${MetaManager.getShards()}（本局 +${this._gainedShards}）`;
+            this._shardsLabel.string = `精铸碎片 ◆${MetaManager.getShards()}（本局 +${this._gainedShards}）· ⚙️ 齿轮 +${this._gainedGears}（累计 ${GearManager.getGears()}）`;
         }
         const list = MetaManager.getUpgradeList();
         list.forEach((u, i) => {
@@ -417,8 +431,9 @@ export class ResultDialog extends Component {
      */
     private dismissAndContinue(evt: GameEvents): void {
         this._showing = false;
-        this._rewardGranted = false; // 续战后的下一次结算需重新发碎片
+        this._rewardGranted = false; // 续战后的下一次结算需重新发碎片/齿轮
         this._gainedShards = 0;
+        this._gainedGears = 0;
         this.node.active = false;
         EventBus.emit(GameEvents.UI_MODAL_CHANGED, false); // 恢复发射输入（LauncherController 事件 + 看门狗双保险）
         for (const layerName of ['FxLayer', 'FloatingTextLayer']) {

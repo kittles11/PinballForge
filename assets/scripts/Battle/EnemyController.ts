@@ -38,11 +38,14 @@ const HIT_FLASH_DURATION = 0.08;
 const DIE_EXPLODE_SCALE = 1.7;
 /** 死亡缩小淡出时长（秒） */
 const DIE_ANIM_DURATION = 0.3;
-/** 头槌冲撞：到达防线后向左扑撞的距离（px） */
-const ATTACK_LUNGE_X = 25;
-/** 弹珠直接命中击退：初速（px/s，向右 = 推离防线）与衰减（px/s²），滑行约 17px 后停下 */
+/** 弹珠直接命中击退：初速（px/s，向右推开敌人）与衰减（px/s²），滑行约 17px 后停下 */
 const KNOCKBACK_SPEED = 90;
 const KNOCKBACK_DECAY = 240;
+/** 🎲 回合下落步长（px/回合，物理肉鸽 P2）：一次发射 = 一回合 = 全体敌人下落一步 */
+const TURN_STEP_Y = 60;
+/** 🏰 城堡线 Y（物理肉鸽 P2）：敌人下落至此线触发攻城（ATTACK_CASTLE）后死亡——
+ *  与旧防线 defenseLineX=-180 的攻城威胁面等距（|320-(-180)| ≈ |480-(-20)|，充当下落版防线） */
+const ENEMY_FORTRESS_LINE_Y = -20;
 /** 敌人物理分组位掩码（project.json collisionGroups ENEMY index 5 = 1<<5，仅与 ORB 互通） */
 const ENEMY_GROUP_MASK = 1 << 5;
 
@@ -87,7 +90,7 @@ const HP_BAR_OFFSET_Y = 42;
 
 /**
  * 敌人控制器：挂载在敌人节点上。
- * - update 中向左行进，到达防线后每 1s 顶撞城堡（frozen / 死亡时不行动）；
+ * - 🎲 物理肉鸽 P2：每回合（玩家发射一次）垂直下落固定步长，触达城堡线撞击城堡后死亡；
  * - 受击按【珠子类型】结算特效：霜冻冰蓝定身 3s / 雷球电光闪 / 熔岩红光暴击 / 普通白闪；
  *   血量归零时缩小淡出销毁并从管理器注销；
  * - 特色类型行为（WaveManager 出怪时 setupType 指定，数值唯一真源见 DataModels.ENEMY_TYPE_STATS）：
@@ -99,13 +102,10 @@ export class EnemyController extends Component {
     @property
     maxHp = 100;
 
-    /** 向左行进速度（px/s） */
+    /** 向左行进速度（px/s）——🎲 物理肉鸽 P2 行军已移除：现仅作为分裂/召唤小怪的 speed 载荷
+     *  与词缀疾风倍率基准透传（保留字段与 WaveManager 既有赋值链兼容，不参与任何移动） */
     @property
-    moveSpeed = 30;
-
-    /** 炮塔防线 X 坐标：到达后停在炮塔右侧防线，不再向左穿透 */
-    @property
-    defenseLineX = -180;
+    moveSpeed = 45;
 
     /** 当前生命值 */
     currentHp = 100;
@@ -141,7 +141,7 @@ export class EnemyController extends Component {
     private _bulwarkLayers = 0;
     /** C 破绽：当前处于受击 ×2 窗口 */
     private _exposed = false;
-    /** 施法前摇：诏令/举盾预告期间定身停攻（可读信号 + 玩家 DPS 补偿），update 跳过行进 */
+    /** 施法前摇：诏令/举盾预告期间定身（可读信号 + 玩家 DPS 补偿），行进/下落与击退全部暂停 */
     private _casting = false;
     /** 死亡掉金币（Boss 诏令亲卫由 WaveManager 置位；0=不掉） */
     public goldOnDeath = 0;
@@ -178,10 +178,7 @@ export class EnemyController extends Component {
     }
     private _dead = false;
 
-    /** 到达防线后每 attackInterval 秒攻击城堡一次 */
-    @property
-    attackInterval = 1.0;
-    /** 每次攻击对城堡造成的伤害 */
+    /** 每次撞击城堡对城堡造成的伤害（🎲 物理肉鸽 P2：敌人触达城堡线时结算一次） */
     @property
     attackDamage = 10;
     /** 重炮过载（战后卡牌奖励）：聚能漏斗（红）伤害倍率额外加成，1 = 无加成，1.5 = +50%；由 OrbController 入槽结算时乘入 */
@@ -208,12 +205,8 @@ export class EnemyController extends Component {
         EnemyController.shatterBonusMult = 1; // ⚗️ 碎冰倍率（Task 008）重开零残留
     }
 
-    /** 攻城攻击计时器（到防线后开始累计） */
-    private attackTimer = 0;
     /** 击退剩余滑行速度（px/s，向右；update 中衰减消费，0 = 无击退。弹珠直接命中时置位） */
     private _knockbackSpeed = 0;
-    /** 头槌冲撞动画播放中（期间让位 tween 驱动位置，不参与防线锁定，避免动画被每帧覆盖） */
-    private _lungeAnimating = false;
 
     /** 是否已进入销毁流程（onDestroy 去重，防重复注销） */
     private isDestroyed = false;
@@ -360,48 +353,45 @@ export class EnemyController extends Component {
         EventBus.emit(GameEvents.ENEMY_REMOVED, this);
     }
 
-    protected update(dt: number): void {
-        if (this._dead || !this.node?.isValid) {
+    /** 🎲 回合推进一步（物理肉鸽 P2）：横排行军已移除，敌人改为每回合垂直下落固定步长（TURN_STEP_Y）。
+     *  守卫：死亡 / 游戏结束 / 施法前摇 / 庆祝中不动（frozen 照常下落——冰封只停其输出节奏，不制造永久路障）。
+     *  触达城堡线（Y ≤ ENEMY_FORTRESS_LINE_Y）→ 撞击结算：广播 ATTACK_CASTLE 后死亡，绝不重复扣血。 */
+    public advanceDown(): void {
+        if (this._dead || !this.node?.isValid || this.isGameOver
+            || this._casting || this._celebrating) {
             return;
         }
-        // 游戏结束：彻底停止移动 / 攻击 / 头槌冲撞，原地庆祝，绝不向左穿出屏幕
-        if (this.isGameOver) {
-            this.celebrate();
+        const newY = this.node.position.y - TURN_STEP_Y;
+        if (newY <= ENEMY_FORTRESS_LINE_Y) {
+            this.resolveCastleHit();
             return;
         }
-        // 急冻定身：不移动也不攻击
-        if (this.isFrozen) {
-            return;
-        }
-        // 👹 施法前摇：诏令 / 举盾预告期间定身停攻（读招窗口，位置交由场景静止表达）
-        if (this._casting) {
-            return;
-        }
-        // 头槌冲撞动画播放中：位置交由 tween 驱动，跳过防线锁定
-        if (this._lungeAnimating) {
-            return;
-        }
-        const y = this.node.position.y;
-        // 击退滑行：被弹珠直接命中后向右（推离防线）衰减滑行，与行进速度合成
-        let nx = this.node.position.x - this.moveSpeed * dt;
-        if (this._knockbackSpeed > 0) {
-            nx += this._knockbackSpeed * dt;
-            this._knockbackSpeed = Math.max(0, this._knockbackSpeed - KNOCKBACK_DECAY * dt);
-        }
-        if (nx > this.defenseLineX) {
-            // 未到达防线：正常向左行进（击退只会让 x 更靠右，不影响防线判定与到达锁死）
-            this.node.setPosition(nx, y, 0);
-            return;
-        }
-        // 到达防线（X <= defenseLineX）：强制固定在防线坐标，不再向左穿透
-        this.node.setPosition(this.defenseLineX, y, 0);
+        this.node.setPosition(this.node.position.x, newY, 0);
+    }
 
-        // 累计攻击计时：每满 attackInterval 秒头槌冲撞一次并广播 ATTACK_CASTLE
-        this.attackTimer += dt;
-        if (this.attackTimer >= this.attackInterval) {
-            this.attackTimer = 0;
-            this.lungeAttack();
+    /** 🏰 触底攻城结算（advanceDown 专用）：广播 ATTACK_CASTLE；荆棘城墙反伤照常判定（若致死走 takeDamage 正常死亡结算） */
+    private resolveCastleHit(): void {
+        EventBus.emit(GameEvents.ATTACK_CASTLE, { damage: this.attackDamage });
+        // 荆棘城墙被动：怪物撞城时反弹固定伤害（跳过 50 保底如实扣 35）
+        if (RelicManager.hasRelic(RelicType.ThornCastle)) {
+            this.takeDamage(THORN_REFLECT_DAMAGE, OrbType.Normal, true);
         }
+        this.die();
+    }
+
+    /**
+     * 🎲 物理肉鸽 P2：update 每帧不再驱动敌人横排行军（moveSpeed/defenseLineX 旧逻辑已随 P2 移除），
+     * 移动职责移交 EnemyManager 监听 TURN_ADVANCE → advanceDown（一次发射 = 一回合 = 一步下落）。
+     * 这里仅保留击退的连续衰减动画（核心手感，短期不做回合化）：Kinematic 刚体依赖每帧
+     * setPosition 同步进 b2Body，保证弹珠命中判定不因行军移除而失效。
+     */
+    protected update(dt: number): void {
+        if (this._knockbackSpeed <= 0 || this._dead || !this.node?.isValid
+            || this.isFrozen || this._casting || this._celebrating || this.isGameOver) {
+            return;
+        }
+        this.node.setPosition(this.node.position.x + this._knockbackSpeed * dt, this.node.position.y, 0);
+        this._knockbackSpeed = Math.max(0, this._knockbackSpeed - KNOCKBACK_DECAY * dt);
     }
 
     /** GAME_OVER 全局锁定：置标记并立即启动原地庆祝（幂等：仅存活敌人执行） */
@@ -435,26 +425,7 @@ export class EnemyController extends Component {
             .start();
     }
 
-    /** 头槌冲撞：0.08s 猛烈向左扑撞 25px，0.12s 弹回防线；同时广播城堡扣血事件 */
-    private lungeAttack(): void {
-        this._lungeAnimating = true;
-        const curX = this.defenseLineX;
-        const curY = this.node.position.y;
-        tween(this.node)
-            .to(0.08, { position: new Vec3(curX - ATTACK_LUNGE_X, curY, 0) })
-            .to(0.12, { position: new Vec3(curX, curY, 0) })
-            .call(() => {
-                this._lungeAnimating = false;
-            })
-            .start();
-        // 经全局事件总线广播攻击，城堡监听后自行扣血——彻底解耦
-        EventBus.emit(GameEvents.ATTACK_CASTLE, { damage: this.attackDamage });
-
-        // 荆棘城墙被动：怪物撞城时反弹固定伤害（跳过 50 保底如实扣 35；若致死则走 takeDamage 正常死亡结算）
-        if (RelicManager.hasRelic(RelicType.ThornCastle)) {
-            this.takeDamage(THORN_REFLECT_DAMAGE, OrbType.Normal, true);
-        }
-    }
+    /** 🎲 物理肉鸽 P2：头槌冲撞随每帧行军一并移除——攻城伤害结算移交 advanceDown（触底一次广播 ATTACK_CASTLE，绝不重复扣血） */
 
     /** 受击入口：伤害已由发射端乘好漏斗倍率，此处按【珠子类型】结算受击特效；血量归零则死亡。
      *  @param orbType 珠子类型（决定受击特效：霜冻冻结 / 雷电光闪 / 熔岩红光暴击 / 普通白闪）
@@ -799,11 +770,11 @@ export class EnemyController extends Component {
         this.node.addChild(n);
     }
 
-    /** 弹珠直接命中击退（OrbController.hitEnemy 调用）：向右滑行一小段（推离防线）。
-     *  冻结 / 施法前摇 / 头槌冲撞 / 庆祝 / 死亡中不生效——这些状态的位置由各自驱动（锁定 / tween）接管。 */
+    /** 弹珠直接命中击退（OrbController.hitEnemy 调用）：向右滑行一小段（🎲 P2 保留的连续位移核心手感）。
+     *  冻结 / 施法前摇 / 庆祝 / 死亡中不生效——这些状态的位置由各自驱动（锁定 / tween）接管。 */
     public knockback(): void {
         if (this._dead || !this.node?.isValid || this.isFrozen || this._casting
-            || this._lungeAnimating || this._celebrating) {
+            || this._celebrating) {
             return;
         }
         this._knockbackSpeed = KNOCKBACK_SPEED;

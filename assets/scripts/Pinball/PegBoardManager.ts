@@ -277,6 +277,8 @@ export class PegBoardManager extends Component {
         // 4. 批量实例化并设置坐标与类型（逐钉 try/catch：单钉异常不吞整板——
         //    曾出现「钉板只剩 1 颗」的间歇性症状，靠此日志定位是实例化/设型哪一步断的）
         let spawned = 0;
+        // ★ 本板钉组件收集（根修 pegComponents 未定义红错）：边缘高能标记与过热掷选都消费它
+        const pegComponents: PegComponent[] = [];
         for (let i = 0; i < total; i++) {
             try {
                 const pegNode = instantiate(this.pegPrefab);
@@ -291,6 +293,7 @@ export class PegBoardManager extends Component {
                 peg.setPegType(types[i]);
                 // 爆炸半径随本局实际横向间距自适应：保证炸药钉始终能炸掉一整圈相邻钉
                 peg.explosionRadius = Math.max(BOMB_RADIUS, spacingX * 1.2);
+                pegComponents.push(peg);
                 spawned++;
             } catch (err) {
                 console.error(`[诊断] 第 ${i} 颗钉实例化失败（已生成 ${spawned}/${total}）:`, err);
@@ -308,8 +311,10 @@ export class PegBoardManager extends Component {
             }
         }
         for (let i = 0; i < total; i++) {
-            if (Math.abs(positions[i].x - edgeX) < 0.5) {
-                pegComponents[i].edgeBonus = true;
+            // 判空防越界：单钉实例化失败（try/catch 吞掉）时收集数组与 positions 错位
+            const pc = pegComponents[i];
+            if (pc && Math.abs(positions[i].x - edgeX) < 0.5) {
+                pc.edgeBonus = true;
                 edgeMarked++;
             }
         }

@@ -3,6 +3,8 @@ import {
     MotionStreak, Sprite, gfx, tween, Tween, find,
 } from 'cc';
 import { EventBus, GameEvents } from '../Core/EventBus';
+import { AudioManager } from '../Core/AudioManager';
+import { CameraShake } from '../Core/CameraShake';
 import { EnemyManager } from './EnemyManager';
 import { EnemyController } from './EnemyController';
 import { OrbType, FunnelType } from '../Core/DataModels';
@@ -24,6 +26,11 @@ const BULLET_FLIGHT_TIME = 0.12;
 const FALLBACK_TARGET_X = 360;
 /** 无敌人管理器兜底时直接按固定路径查找的敌人 */
 const FALLBACK_ENEMY_PATH = 'Canvas/BattleLayer/EnemyContainer/Enemy';
+
+/** 🌋 熔岩核弹 AoE 半径（px，BattleLayer 世界坐标）：覆盖下半屏敌人防线的半屏横扫 */
+const LAVA_BLAST_RADIUS = 380;
+/** 熔岩核弹对 AoE 半径外敌人的余波倍率：不白给也不完全落空（半屏 AoE 的边缘衰减） */
+const LAVA_BLAST_OUTER_MULT = 0.3;
 
 /**
  * 炮塔控制器：挂载在 BattleLayer/Turret 节点上。
@@ -105,11 +112,53 @@ export class TurretController extends Component {
     }
 
     /** 开火事件回调：后坐力动画 + 珠子类型特效子弹极速飞向最靠前的敌人 */
-    private onFire(data: { damage: number; orbType: OrbType; funnelType?: FunnelType }): void {
+    private onFire(data: { damage: number; orbType: OrbType; funnelType?: FunnelType; isLavaBlast?: boolean }): void {
+        // 🌋 熔岩球「核弹」（流派质变）：拦截开火 → 不发射普通子弹，直接触发一次大范围爆炸 AoE
+        if (data.isLavaBlast) {
+            this.lavaBlast(data);
+            return;
+        }
         this.playRecoil();
         // ★ 枪口焰：开火瞬间一小团暖白闪
         FxManager.muzzle(this.node.worldPosition);
         this.launchBullet(this.resolveTarget(), data);
+    }
+
+    /**
+     * 🌋 熔岩球「核弹」（流派质变，炮塔侧兑现）：不发射普通子弹，改为一次半屏大范围爆炸 AoE——
+     * LAVA_BLAST_RADIUS 内全部存活敌人各结算一次全额爆炸伤害，半径外 30% 余波；伤害与普通炮弹
+     * 同通道 takeDamage（铁甲格挡 / 坚盾剥层 / 冰封易伤 / ⚒ 攻城炮台加成照常应答）。
+     */
+    private lavaBlast(data: { damage: number }): void {
+        const dmg = Math.round(data.damage * (1 + MetaManager.getSiegeBonus())); // ⚒ 攻城炮台：与普通炮弹同一加成通道
+        const mgr = this.enemyManager ?? EnemyManager.instance;
+        const from = this.node.worldPosition;
+        let hitCount = 0;
+        let cx = 0;
+        let cy = 0;
+        for (const e of (mgr?.aliveEnemies ?? [])) {
+            if (!e?.node?.isValid || e.isDead) {
+                continue; // 强制判空（.clinerules）：跳过已销毁 / 已死亡敌人
+            }
+            const p = e.node.worldPosition;
+            const full = Vec3.distance(from, p) <= LAVA_BLAST_RADIUS;
+            cx += p.x;
+            cy += p.y;
+            hitCount += 1;
+            e.takeDamage(full ? dmg : Math.round(dmg * LAVA_BLAST_OUTER_MULT), OrbType.Lava);
+        }
+        if (hitCount <= 0) {
+            return; // 无存活敌人：核弹落空，不放空炮特效
+        }
+        const center = new Vec3(cx / hitCount, cy / hitCount, 0);
+        // 视听：巨型火红爆炸 + 冲击环 + 浓烟 + 震屏 + 低频轰鸣（全部复用既有 Fx/Audio 管线，零新资产）
+        FxManager.blast(center, Theme.orb.lava, LAVA_BLAST_RADIUS);
+        FxManager.ring(center, Theme.orb.lava, LAVA_BLAST_RADIUS / 40, 0.45);
+        FxManager.smoke(center, 150);
+        FxManager.screenPulse();
+        CameraShake.shake(18, 0.45);
+        AudioManager.playCastleExplode();
+        console.log(`[Turret] 🌋 熔岩核弹引爆：半径 ${LAVA_BLAST_RADIUS}px 内全额伤害，单伤 ${dmg}，波及 ${hitCount} 只敌人`);
     }
 
     /** 优先取管理器选定的最靠前敌人；管理器缺失时用固定路径 find 兜底 */

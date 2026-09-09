@@ -48,6 +48,29 @@ export class BackdropFx extends Component {
         this.mountVignette();
     }
 
+    /**
+     * 重建渲染层（幂等）：先清掉宿主上全部 Gear_*/Vignette 孤儿子节点，再走一遍建层三步。
+     * 根修背景：场景热重载曾把 BackdropFx 堆叠序列化出多份（自检规则 G 防线），每个副本的
+     * start() 都会创建 3 齿轮 + 1 全屏暗角；ensureMounted 只销毁多余组件、其渲染子节点变成
+     * 孤儿继续渲染——曾稳态堆出 7×(3+1)=28 层全屏 overdraw，GPU 填充率打满导致严重卡顿。
+     * 现在去重后重建，保证无论堆叠多少份，稳态恒为 1 组件 + 4 渲染子节点。
+     */
+    private rebuild(): void {
+        const host = this.node;
+        if (!host?.isValid) {
+            return;
+        }
+        for (const child of [...host.children]) {
+            if (child?.isValid && (child.name.startsWith('Gear_') || child.name === 'Vignette')) {
+                child.destroy();
+            }
+        }
+        this._gears = [];
+        this.draw();
+        this.mountGears();
+        this.mountVignette();
+    }
+
     protected update(dt: number): void {
         // 极慢双向旋转：@property 无需暴露，旋转量累计在节点角度上
         for (let i = 0; i < this._gears.length && i < GEARS.length; i++) {
@@ -136,13 +159,17 @@ export class BackdropFx extends Component {
             canvas.insertChild(host, 0); // 子节点最前 = 渲染最底
         }
         // 热重载防御：脚本热更后 getComponent 按新类匹配不到旧实例，会反复 addComponent——
-        // 只保留首个实例、多余销毁（曾堆出 128 份并被编辑器序列化回场景，规则 G 因此告警）
+        // 只保留首个实例、多余销毁（曾堆出 128 份并被编辑器序列化回场景，规则 G 因此告警）。
+        // 多余组件 start() 创建的渲染子节点不会随组件销毁而回收（孤儿继续渲染 → 28 层全屏
+        // overdraw 卡顿），因此去重后调用 rebuild 清孤儿重建，稳态恒为 1 组件 + 4 渲染子节点。
         const comps = host.getComponents(BackdropFx);
         for (let i = 1; i < comps.length; i++) {
             comps[i].destroy();
         }
         if (comps.length === 0) {
             host.addComponent(BackdropFx);
+        } else {
+            comps[0].rebuild();
         }
     }
 

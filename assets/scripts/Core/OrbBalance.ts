@@ -13,12 +13,19 @@ export interface OrbConfig {
 export interface LightningConfig extends OrbConfig {
     scatterAngle: number;
     splitCount: number;
+    /** 🚀 反向深渊（2026-09-08）：全系零重力，弹珠匀速直线反弹（旧 0.3 低重力差随布局反转退役） */
+    gravityScale: number;
+    restitution: number;
+    density: number;
 }
 
 export interface LavaConfig extends OrbConfig {
     scale: number;
+    /** 🚀 反向深渊（2026-09-08）：全系零重力，重质球身份只保留在 density / 伤害通道 */
     gravityScale: number;
     density: number;
+    /** 物理差异（流派深化）：极低弹力 → 铅球砸落不弹跳 */
+    restitution: number;
     splashRadius: number;
     splashEnergyMultiplier: number;
 }
@@ -32,6 +39,7 @@ export interface FrostConfig extends OrbConfig {
 
 export interface HeavyOrbConfig extends OrbConfig {
     scale: number;
+    /** 🚀 反向深渊（2026-09-08）：全系零重力，重质球身份只保留在 density / 伤害通道 */
     gravityScale: number;
     density: number;
 }
@@ -52,19 +60,30 @@ const DEFAULT_NORMAL: OrbConfig = {
     pegEnergyGain: 15,
 };
 
+// ⚡ 流派极致化（方向 1）：雷电球=高弹力羽球，弹力超 1（Box2D 合法，>1 增速反弹）越弹越快，
+//   低密度 0.5 与钉子碰撞几乎不损失动能 → 「全场乱窜 + 高连击」的天雷流派手感底座。
+//   🚀 反向深渊（2026-09-08）：gravityScale 归 0——布局反转后弹珠从屏底向上飞，全系匀速直线。
 const DEFAULT_LIGHTNING: LightningConfig = {
     baseDamage: 40,
     pegEnergyGain: 15,
     scatterAngle: 15 * Math.PI / 180,
     splitCount: 3,
+    gravityScale: 0,
+    restitution: 1.25,
+    density: 0.5,
 };
 
 const DEFAULT_LAVA: LavaConfig = {
     baseDamage: 40,
     pegEnergyGain: 60,
     scale: 1.4,
-    gravityScale: 2,
-    density: 2,
+    // 🪨 流派极致化（方向 1）：密度 ×4 + 弹力 0.1 → 重质熔岩球（入槽即核弹，TurretController.isLavaBlast
+    //   兑现），几乎不弹跳。OrbStuckGuard 递进顶开（1x→2x→3x 脉冲）已按「重质熔岩球」设计，密度翻倍仍在兜底覆盖内。
+    //   🚀 反向深渊（2026-09-08）：gravityScale 归 0——重力 ×2.5 的「铅球砸落」随布局反转退役，
+    //   重质身份保留在密度 ×4 的动量上（撞钉/撞敌反馈不变）。
+    gravityScale: 0,
+    density: 4,
+    restitution: 0.1,
     splashRadius: 120,
     splashEnergyMultiplier: 1,
 };
@@ -89,7 +108,8 @@ const DEFAULT_PLASMA: HeavyOrbConfig = {
     baseDamage: 30,
     pegEnergyGain: 12,
     scale: 1.15,
-    gravityScale: 1.3,
+    // 🚀 反向深渊（2026-09-08）：gravityScale 归 0（旧 1.3 略重物理随布局反转退役）
+    gravityScale: 0,
     density: 1.3,
 };
 
@@ -99,7 +119,8 @@ const DEFAULT_MAGMA: HeavyOrbConfig = {
     baseDamage: 45,
     pegEnergyGain: 75,
     scale: 1.5,
-    gravityScale: 2.4,
+    // 🚀 反向深渊（2026-09-08）：gravityScale 归 0（旧 2.4 超重物理随布局反转退役）
+    gravityScale: 0,
     density: 2.4,
 };
 

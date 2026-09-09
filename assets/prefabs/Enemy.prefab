@@ -148,7 +148,7 @@
       "__id__": 7
     },
     "maxHp": 100,
-    "moveSpeed": 20,
+    "moveSpeed": 45,
     "defenseLineX": -200,
     "_id": ""
   },

@@ -56,16 +56,21 @@ export enum GameEvents {
     RUN_REVIVED = 'RUN_REVIVED',
     /** 🌌 无尽模式续战（50 章通关结算「进入无尽」）：ResultDialog 发起，WaveManager 从第 1 波重新起跑 */
     RUN_CONTINUED = 'RUN_CONTINUED',
+    /** ⚡ 雷电球「天雷」：OrbController 撞钉概率触发，EnemyManager 监听后对随机存活敌人落雷（跨层解耦） */
+    DAMAGE_ENEMY = 'DAMAGE_ENEMY',
+    /** 🎲 回合推进（物理肉鸽 P2）：LauncherController 每次实际发射弹珠时派发，EnemyManager 监听驱动全体敌人回合下落 */
+    TURN_ADVANCE = 'TURN_ADVANCE',
 }
 
 /** 事件 → 载荷 的映射。新增事件时只需在这里登记一次。 */
 export interface GameEventMap {
+    /** 珠子撞中钉子（hitCount = 该珠本次飞行的连击数，非单钉受击数；音高调制/爆点反馈按此消费） */
     [GameEvents.ORB_HIT_PEG]: { pegId: string; orbId: string; points: number; hitCount: number };
     [GameEvents.PEG_EXHAUSTED]: void;
     [GameEvents.ORB_ENTER_FUNNEL]: { orbId: string; funnelId: string };
     [GameEvents.UPDATE_ENERGY]: number;
-    /** 炮塔开火（funnelType：入槽漏斗类型，Boss「破阵坚盾」剥盾判定用；可选字段向后兼容） */
-    [GameEvents.FIRE_TURRET]: { damage: number; orbType: OrbType; funnelType?: FunnelType };
+    /** 炮塔开火（funnelType：入槽漏斗类型，Boss「破阵坚盾」剥盾判定用；isLavaBlast：熔岩球「核弹」标记，TurretController 拦截后改为全屏 AoE；可选字段向后兼容） */
+    [GameEvents.FIRE_TURRET]: { damage: number; orbType: OrbType; funnelType?: FunnelType; isLavaBlast?: boolean };
     [GameEvents.ATTACK_CASTLE]: { damage: number };
     [GameEvents.GAIN_GOLD]: { amount: number; total?: number };
     [GameEvents.WAVE_START]: { config: WaveDef };
@@ -88,6 +93,10 @@ export interface GameEventMap {
     [GameEvents.ENEMY_REMOVED]: EnemyController;
     [GameEvents.RUN_REVIVED]: void;
     [GameEvents.RUN_CONTINUED]: void;
+    /** 天雷请求（载荷为落雷伤害值）：EnemyManager 消费，随机一名存活敌人吃伤 */
+    [GameEvents.DAMAGE_ENEMY]: number;
+    /** 回合推进（无载荷）：一次发射 = 消耗一次开火权 = 一回合 */
+    [GameEvents.TURN_ADVANCE]: void;
 }
 
 /** 监听器签名：无参事件（payload void）为 `() => void`，有参事件强制校验载荷类型 */

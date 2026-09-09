@@ -11,6 +11,9 @@ export const KILL_STREAK_WINDOW = 3;
 /** 连杀奖励音阈值（只对达到该连杀数的击杀弹奖励琶音） */
 export const KILL_STREAK_REWARD = 3;
 
+/** 🎰 连击爆币阈值（音效多巴胺）：单次飞行撞钉连击达到该数后，撞钉音上叠加「老虎机爆币」C6→E6 双音 */
+const COMBO_JACKPOT_MIN = 10;
+
 /**
  * 音频管理器：纯静态类，无需挂载到任何场景节点，import 即用。
  *
@@ -254,6 +257,11 @@ export class AudioManager {
             }
             AudioManager._lastHitSoundTime = now;
         }
+        // 🎰 音效多巴胺（老虎机爆点）：连击 ≥ COMBO_JACKPOT_MIN 时在撞钉音上叠加一组
+        //   C6→E6 短促双音（Web Audio 合成，零素材零加载；无 AudioContext 环境自动静默）。
+        if (combo >= COMBO_JACKPOT_MIN) {
+            AudioManager.playComboJackpot();
+        }
         if (this.audioPool.length === 0) {
             this.init();
         }
@@ -313,6 +321,29 @@ export class AudioManager {
                 gain.disconnect();
             };
         } catch (e) {}
+    }
+
+    /**
+     * 🎰 连击爆币音（音效多巴胺「老虎机爆点」）：连击达到阈值后随撞钉音叠加的高频清脆双音。
+     * 纯 Web Audio 合成（复用 playTone：C6=1047Hz 起音 + E6=1319Hz 错峰收尾），零素材零加载；
+     * 无 AudioContext / 合成异常时静默降级，绝不阻塞主撞钉音。
+     */
+    private static playComboJackpot(): void {
+        if (!AudioManager.sfxEnabled) {
+            return; // ⚙ 音效关：静默
+        }
+        AudioManager.unlockAudio();
+        const ctx = AudioManager.ctx;
+        if (!ctx) {
+            return; // 无 Web Audio API：静默降级
+        }
+        try {
+            // C6 短促起音 + E6 长尾（与金币 Ching 同款 B5→E6 结构，整体升八度后的爆币听感）
+            AudioManager.playTone('sine', 1047, 0.08, 0.18);
+            AudioManager.playTone('square', 1319, 0.22, 0.12, { delay: 0.06 });
+        } catch (e) {
+            // 合成异常不阻塞主撞钉音（playTone 内部已有判空，此处兜底防御未来改动回归）
+        }
     }
 
     /**

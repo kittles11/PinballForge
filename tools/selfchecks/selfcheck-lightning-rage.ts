@@ -5,7 +5,7 @@
  * 修复前：① fireLightningBurst 硬编码 3 颗，applyUpgrade('lightning_projectile', 2) 无人消费（5 连发失效）
  *        ② RewardDialog AddOrb 分支 addOrbToDeck 调用两次（选一张球卡加 2 颗）
  * 覆盖：① OrbBalance 行为真跑（splitCount 默认/升级/reset、lightningSpread 几何锚点）
- *       ② LauncherController 接线（散射消费 splitCount、中心主球判定、随机出射角常量保留）
+ *       ② LauncherController 接线（散射消费 splitCount、中心主球判定、发射零随机）
  *       ③ RewardDialog 加卡唯一性
  */
 import { readFileSync } from 'fs';
@@ -68,8 +68,8 @@ check('fireLightningBurst 消费 OrbBalance.lightning（splitCount/scatterAngle�
 check('硬编码 SCATTER 常量已移除（数量改由数据驱动）', !launcher.includes('SCATTER_'));
 check('中心球为主球（入槽回收），其余副球（i !== centerIdx）',
     /const centerIdx = \(offsets\.length - 1\) \/ 2;/.test(launcher) && /i !== centerIdx/.test(launcher));
-check('随机出射角常量保留（每次发射重滚，LAUNCH_ANGLE_MIN/MAX_DEG）',
-    launcher.includes('LAUNCH_ANGLE_MIN_DEG') && launcher.includes('LAUNCH_ANGLE_MAX_DEG'));
+check('发射零随机：出射角常量与 Math.random 加工已退役（方向 100% 贴合拖拽瞄准线）',
+    !launcher.includes('rollLaunchAngle') && !launcher.includes('Math.random'));
 check('每颗弹旋转方向公式（dir 旋转 offset 角）',
     /dir\.x \* cos - dir\.y \* sin,/.test(launcher) && /dir\.x \* sin \+ dir\.y \* cos,/.test(launcher));
 

@@ -7,6 +7,7 @@ import { AudioManager } from '../Core/AudioManager';
 import { RelicType } from '../Core/DataModels';
 import { RelicManager } from '../Core/RelicManager';
 import { MetaManager } from '../Core/MetaManager';
+import { GearManager } from '../Core/GearManager';
 import { OrbBalance } from '../Core/OrbBalance';
 import { cloneColor, shadeColor, Theme } from '../Core/ArtTheme';
 import { FxManager } from '../Core/FxManager';
@@ -29,8 +30,9 @@ export class CastleController extends Component {
     /** 单例引用：供战后卡牌奖励（城堡维修）等系统直接调用 */
     static instance: CastleController | null = null;
 
+    /** 💥 前期休克疗法：基础兜底 30（MainScene 序列化值已同步压缩；meta/契约加成在其上叠加） */
     @property
-    public maxHp: number = 100;
+    public maxHp: number = 30;
 
     @property(Label)
     public hpLabel: Label | null = null;
@@ -75,13 +77,17 @@ export class CastleController extends Component {
         // ⚑ 锻造契约（方案C）：寒霜契约减益——生命上限 ×castleHpMult（软启动 ×0.9；无契约 ×1）。
         //   在 meta 加成之后套乘：永久成长不吞契约代价，两段各算各的。
         this.maxHp = Math.round(this.maxHp * OrbBalance.castleHpMult);
+        // ⚙️ 局外成长（齿轮天赋）：每累计 100 齿轮 → maxHp 永久 +10（结算沉淀跨局累积，读档即生效；
+        //   在契约乘区之后叠加，永久成长不吞契约代价。GearManager 为模块级单例、import 期已读档，
+        //   与上方 MetaManager 用法同款，onLoad 访问安全）。
+        this.maxHp += GearManager.getCastleBonus();
         this.currentHp = this.maxHp;
         // ⚒ meta 永久升级「战备护盾」：开局要塞护盾（先于 updateDisplay，首帧即显示）
         this.shield += MetaManager.getStartShieldBonus();
         // 矢量要塞精绘（替代场景遗留的单色方块 Sprite）
         this.ensureCastleArt();
         if (!this.hpLabel) {
-            this.hpLabel = find('Canvas/UILayer/CastleHpLabel')?.getComponent(Label) || this.node.getComponentInChildren(Label)!;
+            this.hpLabel = find('Canvas/UILayer/CastleHpLabel')?.getComponent(Label) ?? this.node.getComponentInChildren(Label);
         }
         // 顶部 HUD 两行式布局（修复文字重叠）：城堡钉在第一行左侧（y=606），与第二行的能量上下错开
         if (this.hpLabel?.isValid) {

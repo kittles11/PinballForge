@@ -1,14 +1,15 @@
 /**
- * 发射按钮 × 每发随机角度 × 漏斗中性化 自检（纯 Node，无引擎依赖）——2026-09-07 改版回归锁：
+ * 反向深渊拖拽发射 自检（纯 Node，无引擎依赖）——2026-09-08 改版回归锁：
  *   node --experimental-transform-types selfcheck-launch-button.ts
  *
+ * 布局反转：玩家手指拖拽瞄准、从屏幕底部向上发射，弹珠零随机扰动、飞出屏顶回收。
  * 锁定六件事：
- *  1) 触摸瞄准整体退役：全局触屏监听 / AimPreview 消费 / inputWatchdog / 输入注册对不回潮；
- *  2) 「发 射」按钮接线：ensureLaunchButton 自举 + raisedButton（具名导入，UiKit 无命名空间对象）+ CLICK→互斥→冷却→launchOrb；
- *  3) 每发随机角度：rollLaunchAngle 在 launchOrb 内部（每发重滚，非开局一次），[-165°,-15°] 恒向上；
- *  4) 漏斗中性化：无 themeColor/funnelColor/光柱，EMOJ 标注 + 白色装饰；
- *  5) 球种专用色 token：C_GOLDEN/C_ICEBLUE/C_ORB_RED 接线，共享 C_ICE（冻结特效）未被波及；
- *  6) 按压手感（2026-09-07 按压反馈加版）：attachPressFx 下沉/弹回接线 + UiKit pressed 按压态重绘链路。
+ *  1) 随机散布整体退役：rollLaunchAngle / Math.random 角度加工 / LAUNCH_ANGLE 常量零残留；
+ *  2) 纯拖拽发射：全局 input TOUCH_END 释放 → 冷却节流 → launchOrb(aimDir)，无 Button click 依赖；
+ *  3) 零误差瞄准链：方向 = (松手触点 - 发射座)，launchOrb 归一化零角度加工；
+ *  4) 布局反转落位：发射座兜底置屏底 + 场景 LauncherNode 已迁 (0, -560) + 顶部回收 y ≥ 680；
+ *  5) 按钮链路残留清零：ensureLaunchButton / attachPressFx / raisedButton / LaunchBtn 全部退役；
+ *  6) 回合推进 / 雷球散射保留：TURN_ADVANCE 单点派发 + lightningSpread 扇形旋转复用不回归。
  */
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
@@ -25,98 +26,78 @@ function check(name: string, cond: boolean): void {
 }
 
 const launcher = strip(read('Game', 'LauncherController.ts'));
-const funnel = strip(read('Pinball', 'FunnelSlot.ts'));
-const theme = strip(read('Core', 'ArtTheme.ts'));
+const orb = strip(read('Pinball', 'OrbController.ts'));
+const balanceSrc = strip(read('Core', 'OrbBalance.ts'));
+const scene = readFileSync(join(resolve(process.cwd()), 'assets', 'scenes', 'MainScene.scene'), 'utf8');
 
-// ── 1. 触摸瞄准退役 ──
-check('全局触屏输入监听已移除（Input.EventType / input.on|off 零残留）',
-    !launcher.includes('Input.EventType') && !/\binput\.(on|off)\(/.test(launcher));
-check('AimPreview 预测线消费已移除（simulateAimPreview / trajectoryGraphics / previewSpeedScale）',
-    !launcher.includes('simulateAimPreview') && !launcher.includes('trajectoryGraphics')
-    && !launcher.includes('previewSpeedScale'));
-check('inputWatchdog 看门狗已移除（schedule 心跳不再需要）',
-    !launcher.includes('inputWatchdog') && !launcher.includes('this.schedule('));
-check('onEnable/onDisable 输入注册对已移除（无输入可注册）',
-    !/protected onEnable\(\)/.test(launcher) && !/protected onDisable\(\)/.test(launcher));
+// ── 1. 随机散布退役 ──
+check('随机滚角退役：rollLaunchAngle / LAUNCH_ANGLE_MIN_DEG / LAUNCH_ANGLE_MAX_DEG 零残留',
+    !launcher.includes('rollLaunchAngle') && !launcher.includes('LAUNCH_ANGLE_MIN_DEG')
+    && !launcher.includes('LAUNCH_ANGLE_MAX_DEG'));
+check('发射链路零 Math.random（发射角度 100% 贴合拖拽瞄准线）',
+    !launcher.includes('Math.random'));
 
-// ── 2. 「发 射」按钮 ──
-check('ensureLaunchButton 在 onLoad 自举（场景无需布置，幂等）',
-    /protected onLoad\(\): void[\s\S]{0,900}this\.ensureLaunchButton\(\);/.test(launcher));
-check('按钮自举路径 UILayer/LaunchBtn + 金色凸起（raisedButton 具名导入 + Theme.ui.gold）',
-    /getChildByName\('UILayer'\)/.test(launcher) && /getChildByName\('LaunchBtn'\)/.test(launcher)
-    && /raisedButton\(/.test(launcher) && !/UiKit\./.test(launcher) && /Theme\.ui\.gold/.test(launcher));
-check('按钮固定位置 (0, -545)，屏底漏斗下方（LAUNCH_BTN_POS_Y）',
-    /LAUNCH_BTN_POS_Y = -545/.test(launcher));
-check('点击链路：CLICK → onLaunchClicked（互斥→冷却→launchOrb）',
-    /btn\.on\(Button\.EventType\.CLICK, this\.onLaunchClicked, this\)/.test(launcher)
-    && /private onLaunchClicked\(\): void[\s\S]{0,300}this\.launchOrb\(\);/.test(launcher));
-check('冷却节流沿用 launchCooldown @property（Date.now 差值 < cooldown 拒发）',
-    /now - this\._lastLaunchTime < this\.launchCooldown/.test(launcher));
-check('弹窗互斥保留：UI_MODAL_CHANGED / GAME_OVER / _modalOpen 拦截点按',
-    /EventBus\.on\(GameEvents\.UI_MODAL_CHANGED/.test(launcher)
-    && /EventBus\.on\(GameEvents\.GAME_OVER/.test(launcher)
-    && /if \(this\._modalOpen\) \{\s*return;/.test(launcher));
-check('按钮 Label 挂子节点（cc.Label 与 cc.Graphics 同节点互斥，直加曾致按钮创建中断、节点从未入场景）',
-    /const labelNode = new Node\('Label'\);\s*labelNode\.layer = btn\.layer;\s*btn\.addChild\(labelNode\);/.test(launcher)
-    && !/btn\.addComponent\(Label\)/.test(launcher));
+// ── 2. 纯拖拽发射 ──
+check('全局松手发射：input.on(Input.EventType.TOUCH_END, this.onTouchEnd, this)',
+    /input\.on\(Input\.EventType\.TOUCH_END, this\.onTouchEnd, this\)/.test(launcher));
+check('注销成对：onDestroy input.off(TOUCH_END)（防场景重载泄漏）',
+    /input\.off\(Input\.EventType\.TOUCH_END, this\.onTouchEnd, this\)/.test(launcher));
+check('发射入口唯一化：launchOrb 仅由 onTouchEnd 松手链路调用（一处）',
+    (launcher.match(/this\.launchOrb\(/g) ?? []).length === 1);
+check('Button click 回调零依赖（cc.Button / onLaunchClicked 退役）',
+    !launcher.includes('Button') && !launcher.includes('onLaunchClicked'));
+check('弹窗互斥 + 冷却节流保留（_modalOpen / launchCooldown）',
+    /if \(this\._modalOpen \|\| !this\.launcherNode\?\.isValid\)/.test(launcher)
+    && /now - this\._lastLaunchTime < this\.launchCooldown/.test(launcher));
 
-// ── 3. 每发随机角度（用户拍板：每次发射都随机）──
-check('rollLaunchAngle 使用 Math.random 均匀滚定',
-    /private rollLaunchAngle\(\): number[\s\S]{0,200}Math\.random\(\)/.test(launcher));
-check('随机发生在 launchOrb 内部（每发重滚，而非开局一次）',
-    /private launchOrb\(\): void[\s\S]{0,400}this\.rollLaunchAngle\(\)/.test(launcher));
-const minDeg = Number(launcher.match(/LAUNCH_ANGLE_MIN_DEG = (-?\d+)/)?.[1]);
-const maxDeg = Number(launcher.match(/LAUNCH_ANGLE_MAX_DEG = (-?\d+)/)?.[1]);
-check(`随机角范围恒向上且对称（实际 ${minDeg}°~${maxDeg}°，应 -165~-15）`,
-    minDeg === -165 && maxDeg === -15 && minDeg < maxDeg);
-check('fireLightningBurst 散射链路保留（随机方向 → 扇形旋转复用）',
-    /lightningSpread\(splitCount,\s*scatterAngle\)/.test(launcher));
-check('发射入口唯一化：launchOrb 仅由按钮链路调用（onLaunchClicked 一处）',
-    (launcher.match(/this\.launchOrb\(\)/g) ?? []).length === 1);
+// ── 3. 零误差瞄准链 ──
+check('方向 = 松手触点 - 发射座（getUILocation - worldPosition，所见即所得）',
+    /event\.getUILocation\(\)/.test(launcher)
+    && /aimDir = new Vec2\(ui\.x - origin\.x, ui\.y - origin\.y\)/.test(launcher));
+check('launchOrb 归一化后零角度加工：初速 = 单位方向 × launchSpeed',
+    /const dir = new Vec2\(aimDir\.x \/ len, aimDir\.y \/ len\)/.test(launcher)
+    && /dir\.x \* this\.launchSpeed/.test(launcher) && /dir\.y \* this\.launchSpeed/.test(launcher));
+check('轻点误触 / 朝下拖拽不发射（MIN_AIM_LENGTH + aimDir.y <= 0 双过滤）',
+    /MIN_AIM_LENGTH/.test(launcher) && /aimDir\.y <= 0/.test(launcher));
 
-// ── 4. 漏斗中性化 + EMOJ 标注 ──
-check('漏斗主题色语言整体移除（themeColor/funnelColor/ensureNeonPillar 零残留）',
-    !/themeColor|funnelColor|ensureNeonPillar/.test(funnel)
-    && !/themeColor|funnelColor|ensureNeonPillar/.test(launcher));
-check('场景烘焙色 Sprite 运行时覆白（neutralizeSprite → Theme.white）',
-    /private neutralizeSprite\(\): void[\s\S]{0,200}sp\.color = Theme\.white;/.test(funnel));
-check('装饰中性白：吞球汇聚 converge(Theme.white)',
-    /FxManager\.converge\(this\.node\.worldPosition, Theme\.white\)/.test(funnel));
-check('EMOJ 标注：💥 聚能 ×2 / ❄️ 精炼 ×1.5 / 💰 金币 +20',
-    /💥 聚能 ×2/.test(funnel) && /❄️ 精炼 ×1\.5/.test(funnel) && /💰 金币 \+20/.test(funnel));
+// ── 4. 布局反转落位 ──
+check('发射座兜底置屏底：position.y >= 0 时强制 (0, LAUNCHER_BOTTOM_Y)',
+    /if \(this\.launcherNode\.position\.y >= 0\)/.test(launcher)
+    && /LAUNCHER_BOTTOM_Y = -560/.test(launcher));
+check('发射初速爽快档：launchSpeed 默认 1500（场景序列化同步 ≥1500，零重力匀速直线够快）',
+    /launchSpeed = 1500/.test(launcher)
+    && Number(scene.match(/"launchSpeed": (\d+)/)?.[1] ?? 0) >= 1500);
+check('场景 LauncherNode 已迁屏底 (0, -560)（launchSpeed 序列化块同段）',
+    (() => {
+        const from = scene.indexOf('81OMDIZNdAIZwXraUwXPIt');
+        const seg = scene.lastIndexOf('_lpos', from);
+        return from >= 0 && seg >= 0 && scene.indexOf('"y": -560', seg) < from;
+    })());
+check('顶部回收：y >= 680 触发 recycleAtCeiling（屏高 1280 半屏 640 + 余量）',
+    /const CEILING_RECYCLE_Y = 680;/.test(orb)
+    && /this\.node\.position\.y >= CEILING_RECYCLE_Y/.test(orb)
+    && /this\.recycleAtCeiling\(\)/.test(orb));
+check('顶部回收走卡组守恒管线（弃牌堆回收 + 副球不入库）',
+    /recycleAtCeiling\(\): void \{[\s\S]{0,600}discardOrbType/.test(orb)
+    && !/recycleAtCeiling[\s\S]{0,600}FIRE_TURRET/.test(orb));
 
-// ── 5. 球种专用色 token 接线（ArtTheme）──
-check('新 token：C_GOLDEN #FFD700 / C_ICEBLUE #4FC3F7 / C_ORB_RED 球种专用正红',
-    /C_GOLDEN = 0xFFD700/.test(theme) && /C_ICEBLUE = 0x4FC3F7/.test(theme)
-    && /C_ORB_RED = 0xFF3232/.test(theme));
-check('Theme.orb 接线：lightning=C_GOLDEN / lava=C_ORB_RED / frost=C_ICEBLUE / normal 白',
-    /lightning: hex\(C_GOLDEN\)/.test(theme) && /lava: hex\(C_ORB_RED\)/.test(theme)
-    && /frost: hex\(C_ICEBLUE\)/.test(theme));
-check('拖尾/瞄准线映射同步：1=C_GOLDEN、2=C_ORB_RED、3=C_ICEBLUE；共享 C_ICE（冻结特效）未被动',
-    /1: hex\(C_GOLDEN\)/.test(theme) && /2: hex\(C_ORB_RED\)/.test(theme)
-    && /3: hex\(C_ICEBLUE\)/.test(theme) && /freeze: hex\(C_ICE\)/.test(theme));
+// ── 5. 按钮链路残留清零 ──
+check('按钮链路退役：ensureLaunchButton / attachPressFx / raisedButton / LaunchBtn 零残留',
+    !launcher.includes('ensureLaunchButton') && !launcher.includes('attachPressFx')
+    && !launcher.includes('raisedButton') && !launcher.includes('LaunchBtn')
+    && !launcher.includes('LAUNCH_BTN'));
 
-// ── 6. 按压手感（attachPressFx × UiKit pressed 按压态）──
-const uikit = strip(read('Core', 'UiKit.ts'));
-check('UiKit.raisedButton 支持 pressed 按压态（缺省 false，旧 4/5 参调用方零破坏）',
-    /export function raisedButton\(\s*g: Graphics, w: number, h: number, body: Color, radius: number = DEFAULT_RADIUS, pressed: boolean = false,?\s*\)/.test(uikit));
-check('按压态三变：影子塌缩贴地 / 暗边减半 / 面部减光（静止态逐层同形）',
-    /const shadowOffset = pressed \? 0 : SHADOW_OFFSET;/.test(uikit)
-    && /const edge = pressed \? BASE_EDGE \/ 2 : BASE_EDGE;/.test(uikit)
-    && /const dim = pressed \? -0\.16 : 0;/.test(uikit)
-    && /g\.roundRect\(left, top, w, h - edge, radius\);/.test(uikit));
-check('attachPressFx 接线于按钮自举（TOUCH_START 下沉 + 重绘，END/CANCEL 弹回）',
-    /this\.attachPressFx\(btn, LAUNCH_BTN_W, LAUNCH_BTN_H, Theme\.ui\.gold, LAUNCH_BTN_PRESS_DIP_Y\);/.test(launcher)
-    && /Node\.EventType\.TOUCH_START/.test(launcher)
-    && /Node\.EventType\.TOUCH_END[\s\S]{0,120}Node\.EventType\.TOUCH_CANCEL/.test(launcher));
-check('下沉量 LAUNCH_BTN_PRESS_DIP_Y = 3（与暗边厚度同量级，压满才「按得进去」）',
-    /LAUNCH_BTN_PRESS_DIP_Y = 3;/.test(launcher));
-check('松手 backOut 弹回（to(0.06) 弹性缓动，回弹先过冲再落位）',
-    /tween\(btn\)\s*\.to\(0\.06, \{ position: new Vec3\(btn\.position\.x, restY, 0\) \}, \{ easing: 'backOut' \}\)/.test(launcher));
-check('重绘走 raisedButton pressed（g.clear 后同函数重画，形状语言不漂移）',
-    /g\.clear\(\);\s*raisedButton\(g, w, h, body, undefined, pressed\);/.test(launcher));
-check('弹回前停旧 tween（Tween.stopAllByTarget，防连按中断态叠加）',
-    (launcher.match(/Tween\.stopAllByTarget\(btn\);/g) ?? []).length === 2);
+// ── 6. 回合推进 / 雷球散射 / 零重力保留 ──
+check('launchOrb 成功路径广播 TURN_ADVANCE（单点派发一次）',
+    (launcher.match(/EventBus\.emit\(GameEvents\.TURN_ADVANCE\)/g) ?? []).length === 1);
+check('雷球散射链路保留（消费 splitCount/scatterAngle，中心主球判定）',
+    /OrbBalance\.lightningSpread\(splitCount, scatterAngle\)/.test(launcher)
+    && /i !== centerIdx/.test(launcher));
+check('OrbBalance 四球种 gravityScale 字面量全 0（normal/frost/leech 无重力字段，走统一零重力赋值）',
+    (() => {
+        const vals = balanceSrc.match(/gravityScale:\s*([\d.]+)/g) ?? [];
+        return vals.length === 4 && vals.every((v) => Number(v.split(':')[1].trim()) === 0);
+    })());
 
 console.log(failed === 0 ? '\n全部自检通过 ✔' : `\n存在 ${failed} 项失败 ✘`);
 // 仅失败路径显式非零退出；成功路径自然结束（Windows node 偶发 process.exit(0) libuv 崩溃会污染退出码）

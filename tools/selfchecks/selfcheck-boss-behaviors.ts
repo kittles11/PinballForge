@@ -69,12 +69,12 @@ const orb = strip(read('Pinball', 'OrbController.ts'));
 const turret = strip(read('Battle', 'TurretController.ts'));
 const enemy = strip(read('Battle', 'EnemyController.ts'));
 const wave = strip(read('Battle', 'WaveManager.ts'));
-check('EventBus：FIRE_TURRET 载荷含可选 funnelType（向后兼容）',
-    /\[GameEvents\.FIRE_TURRET\]: \{ damage: number; orbType: OrbType; funnelType\?: FunnelType \}/.test(eventBus));
+check('EventBus：FIRE_TURRET 载荷含可选 funnelType / isLavaBlast（向后兼容）',
+    /\[GameEvents\.FIRE_TURRET\]: \{ damage: number; orbType: OrbType; funnelType\?: FunnelType; isLavaBlast\?: boolean \}/.test(eventBus));
 check('EventBus：ENEMY_SPLIT 载荷含 summon/goldDrop/spawnType 可选旗标',
     /ENEMY_SPLIT\]: \{ x: number; y: number; count: number; hp: number; speed: number; summon\?: boolean; goldDrop\?: number; spawnType\?: EnemyType \}/.test(eventBus));
-check('发射端：OrbController 入槽结算携带 funnelType（剥盾语义源头）',
-    /FIRE_TURRET, \{ damage: Math\.round\(damage\), orbType: this\.orbType, funnelType: type \}/.test(orb));
+check('发射端：OrbController 入槽结算携带 funnelType（剥盾语义源头）+ isLavaBlast（熔岩核弹标记）',
+    /EventBus\.emit\(GameEvents\.FIRE_TURRET,\s*\{[\s\S]*?damage: Math\.round\(damage\),[\s\S]*?orbType: this\.orbType,[\s\S]*?funnelType: type,[\s\S]*?isLavaBlast: this\.orbType === OrbType\.Lava,[\s\S]*?\}\)/.test(orb));
 check('透传链：TurretController 命中时把 funnelType 传入 takeDamage（缺省 null）',
     /takeDamage\((?:dmg|data\.damage), data\.orbType, false, data\.funnelType \?\? null\)/.test(turret));
 
@@ -101,9 +101,9 @@ check('B 诏令：WaveManager 分流 spawnBossGuard 并置 goldOnDeath（掉金�
     && /ec\.goldOnDeath = payload\.goldDrop \?\? 0;/.test(wave));
 check('B 诏令：死亡掉金走 GoldManager.addGold + 跳字（经济机会兑现）',
     /goldOnDeath > 0[\s\S]{0,120}GoldManager\.instance\?\.addGold\(this\.goldOnDeath\)/.test(enemy));
-check('施法可读性：诏令/举盾定身前摇（_casting 置位→update 跳过行进攻击→前摇结束复位）',
+check('施法可读性：诏令/举盾定身前摇（_casting 置位→回合下落与击退全部暂停→前摇结束复位）',
     /this\._casting = true;/.test(enemy)
-    && /if \(this\._casting\) \{\s*return;/.test(enemy)
+    && /\|\| this\._casting \|\| this\._celebrating\) \{\s*return;/.test(enemy)
     && (enemy.match(/this\._casting = false;/g) ?? []).length >= 2);
 check('同屏护栏：aliveCount 达 onScreenCap 诏令静默跳过',
     /aliveCount >= BOSS_BEHAVIOR_STATS\.onScreenCap/.test(enemy));

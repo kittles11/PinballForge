@@ -51,6 +51,14 @@ check('playHit 按 combo 拉高 playbackRate（音调爬升保留）',
     /a\.playbackRate = Math\.min\(1 \+ Math\.max\(0, combo - 1\) \* 0\.05, 2\)/.test(audio));
 check('合成音降级路径同样按 combo 爬升',
     /Math\.min\(880 \* base, 1760\)/.test(audio));
+check('连击 ≥10 老虎机爆币音：阈值常量 + playHit 内触发 + C6(1047)/E6(1319) 双音合成',
+    /const COMBO_JACKPOT_MIN = 10;/.test(audio)
+    && /if \(combo >= COMBO_JACKPOT_MIN\) \{\s*AudioManager\.playComboJackpot\(\);\s*\}/.test(audio)
+    && /AudioManager\.playTone\('sine', 1047, 0\.08, 0\.18\);/.test(audio)
+    && /AudioManager\.playTone\('square', 1319, 0\.22, 0\.12, \{ delay: 0\.06 \}\);/.test(audio));
+check('ORB_HIT_PEG 载荷携带珠子连击数（hitCount: this.hitCount，非单钉受击数）',
+    /hitCount: this\.hitCount,/.test(orb)
+    && !/hitCount: peg\.currentHitCount/.test(orb));
 
 // ── ③ 新手三步引导 ──
 check('TutorialManager 监听三个既有事件（WAVE_START / FIRE_TURRET / ATTACK_CASTLE）',

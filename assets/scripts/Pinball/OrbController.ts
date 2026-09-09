@@ -37,6 +37,8 @@ const FUNNEL_X_LEFT = -80;
 const FUNNEL_X_RIGHT = 80;
 /** 绝对防漏保底：弹珠世界 y 低于该值视为已掉入漏斗结算区 */
 const FUNNEL_FALLBACK_Y = -380;
+/** 🚀 反向深渊顶界：弹珠飞出屏幕最顶端（假设屏高 1280，上半屏缘 640 + 弹珠半径余量）即回收销毁 */
+const CEILING_RECYCLE_Y = 680;
 /** 金币槽入槽结算奖励金币数 */
 const GOLD_REWARD_AMOUNT = 20;
 /** 聚能漏斗（红）：本颗珠子入槽开火伤害倍率（漏斗只做数值修饰，特效仍跟随珠子） */
@@ -46,6 +48,10 @@ const FUNNEL_REFINE_MULT = 1.5;
 /** 连击弹幕：雷球单次飞行连击达到该次数后免费追发 1 颗子弹 */
 const LIGHTNING_COMBO_THRESHOLD = 8;
 const LIGHTNING_COMBO_DAMAGE = 50;
+/** ⚡ 天雷（流派质变）：雷球每次撞钉的概率 → 经 EventBus DAMAGE_ENEMY 对随机存活敌人落雷直伤。
+ *  副球（三连发散弹）不吃此概率：一次发射 3 球，若都判定等效概率 ×3，雷球将无脑碾压其他流派。 */
+const LIGHTNING_STRIKE_CHANCE = 0.15;
+const LIGHTNING_STRIKE_DAMAGE = 40;
 /** 碎冰（Task 008 协同）：冰封敌人被雷球击中时额外承受的固定碎冰伤害（经 takeFreeDamage 直伤）。
  *  设计：碎冰同时解除冻结（enemies have 破绽奖励、冻结易伤失去）——「引爆冰雕」的一次性高额回报，
  *  与雷球连击 8 次追发同价（50）；结算经 scheduleOnce 出物理锁，与连击追发同一管线惯例。 */
@@ -198,29 +204,39 @@ export class OrbController extends Component {
         // 方案B③：热度状态复位（新发射/换球种回到球种本色，_heatTint 由 comboHeatMult 驱动渐变）
         this._heatTint.set(orbTrailColor(this.orbType));
         this._view?.applyTypeVisual(type as OrbType);
+        // 🚀 反向深渊（2026-09-08）：全系零重力——统一按配置赋值（OrbBalance 七球 gravityScale 全 0），
+        //   弹珠改打「匀速直线反弹」（打砖块式）。旧球种重力差（雷 0.3 / 熔岩 2.5 / 等离子 1.3 / 熔核 2.4）
+        //   随布局反转退役；重质球身份保留在 density / 伤害通道上（下方分支只管密度与弹力）。
         const rb = this.getComponent(RigidBody2D);
-        if (type === OrbType.Lava) {
-            if (rb) {
-                rb.gravityScale = OrbBalance.lava.gravityScale;
+        if (rb) {
+            // ?? 0 兜底：normal/frost/leech 配置无 gravityScale 字段，undefined 直赋刚体会让
+            // Box2D 重力缩放变 NaN（速度 NaN → 弹珠隐形且永不回收）——缺省即零重力
+            rb.gravityScale = (OrbBalance.configFor(type as OrbType) as { gravityScale?: number }).gravityScale ?? 0;
+        }
+        if (type === OrbType.Lightning) {
+            // ⚡ 流派极致化：高弹力 + 低密度 → 雷电球飞速乱窜（OrbBalance 单一真源）。
+            //   弹性写在 Collider 夹具上（Box2D 恢复系数取两夹具较大值，自身夹具即决定反弹强度；
+            //   与 BoardDeflectorManager 的 box.restitution 同款 API 路径，RigidBody2D 无 restitution 字段）。
+            const collider = this.getComponent(Collider2D);
+            if (collider) {
+                collider.density = OrbBalance.lightning.density;
+                collider.restitution = OrbBalance.lightning.restitution;
+                collider.apply(); // 已在物理 step 中（场景直放球路径）：重建夹具让密度/弹力立即生效
             }
+        } else if (type === OrbType.Lava) {
             const collider = this.getComponent(Collider2D);
             if (collider) {
                 collider.density = OrbBalance.lava.density;
+                collider.restitution = OrbBalance.lava.restitution;
             }
         } else if (type === OrbType.Plasma) {
             // 🌳 等离子球：略重物理（无视护盾的签名机制在 EnemyController.takeDamage 兑现）
-            if (rb) {
-                rb.gravityScale = OrbBalance.plasma.gravityScale;
-            }
             const collider = this.getComponent(Collider2D);
             if (collider) {
                 collider.density = OrbBalance.plasma.density;
             }
         } else if (type === OrbType.Magma) {
             // 🌳 熔核球：超重重压（高能量累积 + 剥坚盾 3 层，在 EnemyController 兑现）
-            if (rb) {
-                rb.gravityScale = OrbBalance.magma.gravityScale;
-            }
             const collider = this.getComponent(Collider2D);
             if (collider) {
                 collider.density = OrbBalance.magma.density;
@@ -268,6 +284,31 @@ export class OrbController extends Component {
         }
     }
 
+    /**
+     * 🚀 反向深渊顶部回收（2026-09-08）：弹珠从屏底向上飞，越过屏幕最顶端（y ≥ CEILING_RECYCLE_Y）
+     * 即回收销毁——与入槽结算同一条管线（弃牌堆回收 + scheduleOnce(0) 延迟销毁），保证卡组守恒，
+     * 但不触发 FIRE_TURRET / 漏斗结算 / 跳字（顶部飞出 = 纯 miss，不产生任何战斗效果）。
+     */
+    private recycleAtCeiling(): void {
+        if (this._funnelEntered || this._destroying || !this.node?.isValid) {
+            return;
+        }
+        this._funnelEntered = true;
+        this._destroying = true;
+        this._stuckGuard?.suspend();
+        // 回收其类型编号进牌库弃牌堆（副球不入牌库 → 卡组守恒；复用入槽同款管线）
+        if (!this.isSplitChild) {
+            DeckManager.instance?.discardOrbType(this.orbType);
+        }
+        console.log(`[OrbController] ${this.node.name} 飞出屏幕顶端（y=${Math.round(this.node.position.y)}），顶部回收`);
+        // 与入槽结算同款：Node.destroy 首步失活会踩物理锁，scheduleOnce(0) 挪出物理 step
+        this.scheduleOnce(() => {
+            if (this.node?.isValid) {
+                this.node.destroy();
+            }
+        }, 0);
+    }
+
     protected onDestroy(): void {
         if (this._collider?.isValid) {
             this._collider.off(Contact2DType.BEGIN_CONTACT, this.onBeginContact, this);
@@ -284,10 +325,20 @@ export class OrbController extends Component {
         if (!this.node?.isValid || this._funnelEntered) {
             return;
         }
-        // 绝对防漏保底：掉到漏斗高度即按 x 自动判定落槽（原有逻辑）
-        if (this.node.position.y < FUNNEL_FALLBACK_Y) {
-            this.triggerFunnelAndDestroy(null); // 无槽位引用，按 x 自动判定槽位
+        // 🚀 反向深渊顶界回收：向上飞出屏幕最顶端即销毁（turn 判空守卫在前，安全访问 position）
+        if (this.node.position.y >= CEILING_RECYCLE_Y) {
+            this.recycleAtCeiling();
             return;
+        }
+        // 绝对防漏保底（仅收下落球）：反向深渊发射座 (-560) 在保底线之下——出生上飞球
+        //（vy > 0）必须放行，否则第一帧就被判「坠入漏斗」秒结算销毁（发射即消失的根因）；
+        // 只有带下落速度坠回漏斗区的球才按 x 自动判槽结算（与旧重力布局「掉落进漏斗」语义一致）
+        if (this.node.position.y < FUNNEL_FALLBACK_Y) {
+            const vy = this.getComponent(RigidBody2D)?.linearVelocity.y ?? 0;
+            if (vy < 0) {
+                this.triggerFunnelAndDestroy(null); // 无槽位引用，按 x 自动判定槽位
+                return;
+            }
         }
     }
 
@@ -420,12 +471,21 @@ export class OrbController extends Component {
             peg.gildedAtWave = 0;
         }
 
-        // 广播撞钉事件（含该钉累计受击数，供其它系统统计）
+        // ⚡ 天雷（流派质变）：雷球主球撞钉 15% 概率经事件总线对随机存活敌人落雷直伤——
+        //   跨层联动走 DAMAGE_ENEMY（EnemyManager 消费），本类不 import 敌人系统（.clinerules 解耦红线）。
+        //   发射路径在物理回调栈内：EnemyManager 落雷侧 takeDamage 自带 scheduleOnce 出锁（与 hitEnemy 同惯例）。
+        if (this.orbType === OrbType.Lightning && !this.isSplitChild
+            && Math.random() < LIGHTNING_STRIKE_CHANCE) {
+            EventBus.emit(GameEvents.DAMAGE_ENEMY, LIGHTNING_STRIKE_DAMAGE);
+        }
+
+        // 广播撞钉事件：hitCount = 本颗弹珠本次飞行的连击数（音效多巴胺：AudioManager 等订阅方
+        // 据此做音高/爆点反馈；原「该钉累计受击数」语义废弃——全库无消费者，安全切换）
         EventBus.emit(GameEvents.ORB_HIT_PEG, {
             pegId: peg.node.uuid,
             orbId: this.orbId,
             points: this.accumulatedDamage,
-            hitCount: peg.currentHitCount,
+            hitCount: this.hitCount,
         });
 
         // ★ 撞钉火花：粒数随该钉累计受击数爬升（与音效音高爬升对齐）；
@@ -599,8 +659,15 @@ export class OrbController extends Component {
         } else if (type === FunnelType.IceFreeze) {
             damage *= FUNNEL_REFINE_MULT;
         }
-        // funnelType 随载荷透传：伤害倍率已乘入，但 Boss「破阵坚盾」需要漏斗语义做剥盾判定
-        EventBus.emit(GameEvents.FIRE_TURRET, { damage: Math.round(damage), orbType: this.orbType, funnelType: type });
+        // funnelType 随载荷透传：伤害倍率已乘入，但 Boss「破阵坚盾」需要漏斗语义做剥盾判定。
+        // 🌋 核弹（流派质变）：熔岩球入槽附加 isLavaBlast 标记 → TurretController 拦截后
+        //   不发普通子弹，改为一次大范围爆炸 AoE（伤害取本次聚能伤害）。
+        EventBus.emit(GameEvents.FIRE_TURRET, {
+            damage: Math.round(damage),
+            orbType: this.orbType,
+            funnelType: type,
+            isLavaBlast: this.orbType === OrbType.Lava,
+        });
 
         // ★ 结算大字（Balatro 式明牌）：伤害槽入槽即弹出「⚡基础 ×倍率」+「总伤 💥」两段跳字，
         //   玩家不用心算也能看懂漏斗的价值；金币槽保留专属「+20 💰」跳字（下方分支），不重复弹。

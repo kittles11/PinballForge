@@ -33,12 +33,12 @@ const models = read('Core', 'DataModels.ts');
 // ── 1. 事件载荷：珠子类型透传（根因修复）──
 // ★ 契约演进（P2-1 Boss 坚盾）：载荷补可选 funnelType，仅作剥盾机制元数据；
 //   核心不变量不变——漏斗倍率仍在发射端一次性乘入，敌方绝不按漏斗重算伤害。
-check('FIRE_TURRET 载荷含 orbType + 可选 funnelType（珠子类型透传，剥盾语义随载荷）',
-    /\[GameEvents\.FIRE_TURRET\]:\s*\{\s*damage:\s*number;\s*orbType:\s*OrbType;\s*funnelType\?:\s*FunnelType\s*\}/.test(eventBus));
+check('FIRE_TURRET 载荷含 orbType + 可选 funnelType / isLavaBlast（珠子类型透传，剥盾语义随载荷）',
+    /\[GameEvents\.FIRE_TURRET\]:\s*\{\s*damage:\s*number;\s*orbType:\s*OrbType;\s*funnelType\?:\s*FunnelType;\s*isLavaBlast\?:\s*boolean\s*\}/.test(eventBus));
 
 // ── 2. OrbController：漏斗只做数值修饰，珠子类型原样广播 ──
-check('广播开火载荷为 { damage, orbType, funnelType }（倍率已乘入，funnelType 仅供 Boss 剥盾）',
-    /EventBus\.emit\(GameEvents\.FIRE_TURRET,\s*\{\s*damage:\s*Math\.round\(damage\),\s*orbType:\s*this\.orbType,\s*funnelType:\s*type\s*\}\)/.test(orbCtrl));
+check('广播开火载荷为 { damage, orbType, funnelType, isLavaBlast }（倍率已乘入，funnelType 仅供 Boss 剥盾）',
+    /EventBus\.emit\(GameEvents\.FIRE_TURRET,\s*\{[\s\S]*?damage: Math\.round\(damage\),[\s\S]*?orbType: this\.orbType,[\s\S]*?funnelType: type,[\s\S]*?isLavaBlast: this\.orbType === OrbType\.Lava,[\s\S]*?\}\)/.test(orbCtrl));
 check('聚能倍率常量 FUNNEL_FOCUS_MULT = 2',
     /const\s+FUNNEL_FOCUS_MULT\s*=\s*2\s*;/.test(orbCtrl));
 check('精炼倍率常量 FUNNEL_REFINE_MULT = 1.5',
